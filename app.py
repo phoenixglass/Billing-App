@@ -126,7 +126,7 @@ def assign_staff(ws):
                 staff = "Melissa"
 
         if not staff:
-    	    resident_name = str(ws.cell(row, cols.get('resident', 1)).value or "")
+            resident_name = str(ws.cell(row, cols.get('resident', 1)).value or "")
             groupfld1 = str(ws.cell(row, cols.get('groupfld1', 1)).value or "")
     
             if "O'Flynn, Karen" in resident_name and ("OP Chappaqua" in groupfld1 or "OP NYC" in groupfld1):
