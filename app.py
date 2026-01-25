@@ -93,9 +93,28 @@ def assign_staff(ws):
             cols['payer'] = col
         elif header == "Billing Provider":
             cols['billing_provider'] = col
+        elif header == "Date of Service":
+            cols['dos'] = col
     
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
+    
+    # Get today's day of week (0=Monday, 6=Sunday)
+    today = datetime.now()
+    day_of_week = today.weekday()  # 0=Monday, 1=Tuesday, ..., 4=Friday
+    
+    # Define non-billable services by day
+    non_billable_services = {
+        0: ["Detox", "Residential", "Partial Hospitalization", "E-care"],  # Monday
+        1: [],  # Tuesday - bill all
+        2: ["E-care"],  # Wednesday
+        3: ["E-care"],  # Thursday
+        4: ["E-care"],  # Friday
+        5: ["E-care"],  # Saturday (same as Wed-Fri)
+        6: ["E-care"],  # Sunday (same as Wed-Fri)
+    }
+    
+    non_billable = non_billable_services.get(day_of_week, [])
     
     # Assign staff
     for row in range(2, ws.max_row + 1):
@@ -105,6 +124,9 @@ def assign_staff(ws):
         
         staff = None
         
+        # Check if service is non-billable for this day
+        is_non_billable = any(non_bill_service in service for non_bill_service in non_billable)
+        
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
             billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
@@ -113,6 +135,10 @@ def assign_staff(ws):
             if (billing_provider == "O'Flynn, Karen" and 
                 (group_fld1 == "OP Chappaqua" or group_fld1 == "OP NYC")):
                 staff = "Unable to Bill"
+        
+        # Unable to Bill: Non-billable service for this day of week
+        if not staff and is_non_billable:
+            staff = "Unable to Bill"
         
         # Melissa: (Detox or Residential) + (Aetna or Humana)
         if not staff:
@@ -149,25 +175,35 @@ def assign_staff(ws):
     print("Staff assignment complete")
 
 def finalize_workbook(wb):
-    """Add Status/Comments columns and validation"""
+    """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
     ws = wb.active
     
+    # Bold header row
+    for col in range(1, ws.max_column + 1):
+        ws.cell(1, col).font = openpyxl.styles.Font(bold=True)
+    
+    # Insert two columns at E
     ws.insert_cols(5, 2)
     ws.cell(1, 5).value = "Status"
     ws.cell(1, 6).value = "Comments"
+    ws.cell(1, 5).font = openpyxl.styles.Font(bold=True)
+    ws.cell(1, 6).font = openpyxl.styles.Font(bold=True)
     
+    # Create Sheet2 with validation list
     ws_list = wb.create_sheet("Sheet2")
     ws_list['A1'] = "Billed"
     ws_list['A2'] = "Unable to Bill"
     ws_list['A3'] = "Contractual Adj"
     ws_list['A4'] = "Incomplete Billings"
     
+    # Add data validation to Status column
     dv = DataValidation(type="list", formula1="=Sheet2!$A$1:$A$4", allow_blank=True)
     ws.add_data_validation(dv)
     
     last_row = ws.max_row
     dv.add(f'E2:E{last_row}')
     
+    # Widen columns to fit all text
     for col in range(1, ws.max_column + 1):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
