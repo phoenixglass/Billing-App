@@ -118,7 +118,7 @@ def assign_staff(ws):
             no_drug_screen = "Drug Screen" not in service
             has_insurance = "Aetna" in payer or "Humana" in payer
             
-            if has_detox_res and no_drug_screen and has_insurance:
+            if has_detox_res and no_drug_screen and has_insurance and group != "Self Pay":
                 staff = "Melissa"
         
         if not staff:
