@@ -84,10 +84,14 @@ def assign_staff(ws):
         header = ws.cell(1, col).value
         if header == "GROUPFLD2":
             cols['group'] = col
+        elif header == "GROUPFLD1":
+            cols['groupfld1'] = col
         elif header == "Service":
             cols['service'] = col
         elif header == "Payer":
             cols['payer'] = col
+        elif header == "Billing Provider":
+            cols['resident'] = col
     
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
@@ -120,6 +124,13 @@ def assign_staff(ws):
             
             if has_detox_res and no_drug_screen and has_insurance and group != "Self Pay":
                 staff = "Melissa"
+
+        if not staff:
+    	    resident_name = str(ws.cell(row, cols.get('resident', 1)).value or "")
+            groupfld1 = str(ws.cell(row, cols.get('groupfld1', 1)).value or "")
+    
+            if "O'Flynn, Karen" in resident_name and ("OP Chappaqua" in groupfld1 or "OP NYC" in groupfld1):
+                staff = "Unable to Bill"
         
         if not staff:
             staff = "Rosanna"
