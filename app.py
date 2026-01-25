@@ -79,23 +79,25 @@ def step_1_extract_invalid(ws):
 def assign_staff(ws):
     """Assign staff names based on business rules"""
     
+    # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
     for col in range(1, ws.max_column + 1):
         header = ws.cell(1, col).value
-        if header == "GROUPFLD2":
+        if header == "GROUPFLD1":
+            cols['group_fld1'] = col
+        elif header == "GROUPFLD2":
             cols['group'] = col
-        elif header == "GROUPFLD1":
-            cols['groupfld1'] = col
         elif header == "Service":
             cols['service'] = col
         elif header == "Payer":
             cols['payer'] = col
         elif header == "Billing Provider":
-            cols['resident'] = col
+            cols['billing_provider'] = col
     
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
     
+    # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
         service = str(ws.cell(row, cols['service']).value or "")
@@ -103,39 +105,48 @@ def assign_staff(ws):
         
         staff = None
         
-        if group == "Self Pay":
+        # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
+        if 'billing_provider' in cols and 'group_fld1' in cols:
+            billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
+            group_fld1 = str(ws.cell(row, cols['group_fld1']).value or "").strip()
+            
+            if (billing_provider == "O'Flynn, Karen" and 
+                (group_fld1 == "OP Chappaqua" or group_fld1 == "OP NYC")):
+                staff = "Unable to Bill"
+        
+        # Melissa: (Detox or Residential) + (Aetna or Humana)
+        if not staff:
+            has_detox_res = ("Detox" in service or "Residential" in service)
+            has_insurance = "Aetna" in payer or "Humana" in payer
+            
+            if has_detox_res and has_insurance:
+                staff = "Melissa"
+        
+        # CB: Self Pay
+        if not staff and group == "Self Pay":
             staff = "CB"
-        elif group == "Insurance":
+        
+        # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
+        if not staff and group == "Insurance":
             if ("IOP" in service or 
                 service.startswith("Acupuncture") or 
                 "Partial Hospitalization" in service):
                 staff = "Rosanna"
         
+        # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
             if (service.startswith("Detox") or 
                 service.startswith("Drug Screen 13 Panel") or 
                 service.startswith("Residential")):
                 staff = "Jasmine"
         
-        if not staff:
-            has_detox_res = ("Detox" in service or "Residential" in service)
-            no_drug_screen = "Drug Screen" not in service
-            has_insurance = "Aetna" in payer or "Humana" in payer
-            
-            if has_detox_res and no_drug_screen and has_insurance and group != "Self Pay":
-                staff = "Melissa"
-
-        if not staff:
-            resident_name = str(ws.cell(row, cols.get('resident', 1)).value or "")
-            groupfld1 = str(ws.cell(row, cols.get('groupfld1', 1)).value or "")
-    
-            if "O'Flynn, Karen" in resident_name and ("OP Chappaqua" in groupfld1 or "OP NYC" in groupfld1):
-                staff = "Unable to Bill"
-        
+        # Rosanna_2: Fill remaining blanks
         if not staff:
             staff = "Rosanna"
         
         ws.cell(row, 1).value = staff
+    
+    print("Staff assignment complete")
 
 def finalize_workbook(wb):
     """Add Status/Comments columns and validation"""
