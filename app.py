@@ -93,8 +93,6 @@ def assign_staff(ws):
             cols['payer'] = col
         elif header == "Billing Provider":
             cols['billing_provider'] = col
-        elif header == "Date of Service":
-            cols['dos'] = col
     
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
@@ -103,15 +101,15 @@ def assign_staff(ws):
     today = datetime.now()
     day_of_week = today.weekday()  # 0=Monday, 1=Tuesday, ..., 4=Friday
     
-    # Define non-billable services by day
+    # Define non-billable services by day (case-insensitive matching)
     non_billable_services = {
-        0: ["Detox", "Residential", "Partial Hospitalization", "E-care"],  # Monday
+        0: ["detox", "residential", "partial hospitalization", "e-care"],  # Monday
         1: [],  # Tuesday - bill all
-        2: ["E-care"],  # Wednesday
-        3: ["E-care"],  # Thursday
-        4: ["E-care"],  # Friday
-        5: ["E-care"],  # Saturday (same as Wed-Fri)
-        6: ["E-care"],  # Sunday (same as Wed-Fri)
+        2: ["e-care"],  # Wednesday
+        3: ["e-care"],  # Thursday
+        4: ["e-care"],  # Friday
+        5: ["e-care"],  # Saturday
+        6: ["e-care"],  # Sunday
     }
     
     non_billable = non_billable_services.get(day_of_week, [])
@@ -119,12 +117,12 @@ def assign_staff(ws):
     # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
-        service = str(ws.cell(row, cols['service']).value or "")
-        payer = str(ws.cell(row, cols['payer']).value or "")
+        service = str(ws.cell(row, cols['service']).value or "").lower()
+        payer = str(ws.cell(row, cols['payer']).value or "").lower()
         
         staff = None
         
-        # Check if service is non-billable for this day
+        # Check if service is non-billable for this day (case-insensitive)
         is_non_billable = any(non_bill_service in service for non_bill_service in non_billable)
         
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
@@ -142,8 +140,8 @@ def assign_staff(ws):
         
         # Melissa: (Detox or Residential) + (Aetna or Humana)
         if not staff:
-            has_detox_res = ("Detox" in service or "Residential" in service)
-            has_insurance = "Aetna" in payer or "Humana" in payer
+            has_detox_res = ("detox" in service or "residential" in service)
+            has_insurance = "aetna" in payer or "humana" in payer
             
             if has_detox_res and has_insurance:
                 staff = "Melissa"
@@ -154,16 +152,16 @@ def assign_staff(ws):
         
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
-            if ("IOP" in service or 
-                service.startswith("Acupuncture") or 
-                "Partial Hospitalization" in service):
+            if ("iop" in service or 
+                service.startswith("acupuncture") or 
+                "partial hospitalization" in service):
                 staff = "Rosanna"
         
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            if (service.startswith("Detox") or 
-                service.startswith("Drug Screen 13 Panel") or 
-                service.startswith("Residential")):
+            if ("detox" in service or 
+                service.startswith("drug screen 13 panel") or 
+                service.startswith("residential")):
                 staff = "Jasmine"
         
         # Rosanna_2: Fill remaining blanks
