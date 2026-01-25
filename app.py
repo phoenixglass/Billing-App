@@ -181,7 +181,7 @@ def process_workbook(uploaded_file):
     
     output_files = {}
     
-    for staff_name in ["Rosanna", "Jasmine", "CB"]:
+        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
         new_wb = openpyxl.Workbook()
         new_ws = new_wb.active
         new_ws.title = "Sheet1"
