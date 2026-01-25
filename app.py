@@ -200,7 +200,7 @@ def process_workbook(uploaded_file):
     main_output = io.BytesIO()
     wb.save(main_output)
     main_output.seek(0)
-    main_filename = f"{filename_prefix}Main.xlsx"
+    main_filename = f"{filename_prefix}Masters.xlsx"
     output_files[main_filename] = main_output
     
     return output_files, invalid_count, date_token
