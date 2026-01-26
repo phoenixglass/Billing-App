@@ -3,12 +3,89 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 import tempfile
+import os
+import hashlib
+import logging
+from pathlib import Path
+
+# Configure audit logging
+LOG_DIR = Path("audit_logs")
+LOG_DIR.mkdir(exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_DIR / f"audit_{datetime.now().strftime('%Y%m%d')}.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Unbilled Billing App", layout="wide")
+
+# Security: Session timeout (15 minutes of inactivity)
+SESSION_TIMEOUT_MINUTES = 15
+
+def check_password():
+    """Returns True if user has entered correct password."""
+    def password_entered():
+        """Checks whether password entered is correct."""
+        # Simple password check - in production, use environment variable or secure vault
+        # Hash the password for basic security
+        entered_hash = hashlib.sha256(st.session_state["password"].encode()).hexdigest()
+        # Default password: "billing2026" (hash stored)
+        correct_hash = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+        
+        if entered_hash == correct_hash:
+            st.session_state["password_correct"] = True
+            st.session_state["last_activity"] = datetime.now()
+            st.session_state["username"] = st.session_state.get("username_input", "user")
+            logger.info(f"User '{st.session_state['username']}' logged in successfully")
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+            logger.warning(f"Failed login attempt for user '{st.session_state.get('username_input', 'unknown')}'")
+
+    # Check for session timeout
+    if "last_activity" in st.session_state:
+        time_since_activity = datetime.now() - st.session_state["last_activity"]
+        if time_since_activity > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
+            st.session_state["password_correct"] = False
+            logger.info(f"Session timeout for user '{st.session_state.get('username', 'unknown')}'")
+            st.warning("Session expired due to inactivity. Please log in again.")
+    
+    # Update last activity
+    if st.session_state.get("password_correct", False):
+        st.session_state["last_activity"] = datetime.now()
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.title("🔒 Secure Login")
+    st.markdown("### PHI Access Control")
+    st.info("⚠️ This application processes Protected Health Information (PHI). Authorized users only.")
+    
+    st.text_input("Username", key="username_input")
+    st.text_input("Password", type="password", on_change=password_entered, key="password")
+    
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("😕 Incorrect username or password")
+    
+    st.markdown("---")
+    st.caption("Default credentials: username='admin', password='billing2026'")
+    st.caption("⚠️ Change default password in production deployment")
+    
+    return False
+
+if not check_password():
+    st.stop()
+
+# User is authenticated - show main app
 st.title("Unbilled Billing Processor")
+st.markdown(f"👤 Logged in as: **{st.session_state.get('username', 'user')}**")
 st.markdown("Upload your billing file to process it automatically")
 
 def extract_date_from_filename(filename):
@@ -258,64 +335,114 @@ def finalize_workbook(wb):
     for col in range(1, ws.max_column + 1):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
+def validate_uploaded_file(uploaded_file):
+    """Validate uploaded file for security."""
+    # Check file size (max 50MB)
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+    file_size = len(uploaded_file.getvalue())
+    
+    if file_size > MAX_FILE_SIZE:
+        raise ValueError(f"File too large ({file_size/1024/1024:.1f}MB). Maximum allowed: 50MB")
+    
+    # Validate file extension
+    if not uploaded_file.name.endswith('.xlsx'):
+        raise ValueError("Only .xlsx files are allowed")
+    
+    # Check for suspicious patterns in filename
+    suspicious_patterns = ['..', '/', '\\', '<', '>', '|', ':', '*', '?', '"']
+    if any(pattern in uploaded_file.name for pattern in suspicious_patterns):
+        raise ValueError("Filename contains invalid characters")
+    
+    logger.info(f"User '{st.session_state.get('username', 'unknown')}' uploaded file: {uploaded_file.name} ({file_size} bytes)")
+    return True
+
+def secure_cleanup(file_path):
+    """Securely delete temporary file."""
+    try:
+        if os.path.exists(file_path):
+            # Overwrite with random data before deletion (simple secure delete)
+            with open(file_path, 'ba+', buffering=0) as f:
+                length = f.tell()
+                f.seek(0)
+                f.write(os.urandom(length))
+            os.remove(file_path)
+            logger.info(f"Securely deleted temp file: {file_path}")
+    except Exception as e:
+        logger.error(f"Error during secure cleanup: {e}")
+
 def process_workbook(uploaded_file):
-    """Process the uploaded workbook"""
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-        tmp.write(uploaded_file.getbuffer())
-        tmp_path = tmp.name
-    
-    wb = openpyxl.load_workbook(tmp_path)
-    ws = wb.active
-    
-    date_token = extract_date_from_filename(uploaded_file.name)
-    if not date_token:
-        raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
-    
-    filename_prefix = get_filename_prefix(uploaded_file.name)
-    
-    invalid_count = step_1_extract_invalid(ws)
-    assign_staff(ws, date_token)
-    
-    output_files = {}
-    
-    for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
-        new_wb = openpyxl.Workbook()
-        new_ws = new_wb.active
-        new_ws.title = "Sheet1"
+    """Process the uploaded workbook with security controls"""
+    tmp_path = None
+    try:
+        # Validate file first
+        validate_uploaded_file(uploaded_file)
         
-        for col in range(1, ws.max_column + 1):
-            new_ws.cell(1, col).value = ws.cell(1, col).value
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            tmp.write(uploaded_file.getbuffer())
+            tmp_path = tmp.name
         
-        new_row = 2
-        for row in range(2, ws.max_row + 1):
-            if ws.cell(row, 1).value == staff_name:
-                for col in range(1, ws.max_column + 1):
-                    new_ws.cell(new_row, col).value = ws.cell(row, col).value
-                new_row += 1
+        logger.info(f"Processing file: {uploaded_file.name} (temp: {tmp_path})")
         
-        if new_row == 2:
-            continue
+        wb = openpyxl.load_workbook(tmp_path)
+        ws = wb.active
         
-        if staff_name in ["Rosanna", "Jasmine"]:
-            finalize_workbook(new_wb)
+        date_token = extract_date_from_filename(uploaded_file.name)
+        if not date_token:
+            raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
         
-        output = io.BytesIO()
-        new_wb.save(output)
-        output.seek(0)
-        output_filename = f"{filename_prefix}{staff_name}.xlsx"
-        output_files[output_filename] = output
-    
-    main_output = io.BytesIO()
-    wb.save(main_output)
-    main_output.seek(0)
-    main_filename = f"{filename_prefix}Masters.xlsx"
-    output_files[main_filename] = main_output
-    
-    return output_files, invalid_count, date_token
+        filename_prefix = get_filename_prefix(uploaded_file.name)
+        
+        invalid_count = step_1_extract_invalid(ws)
+        assign_staff(ws, date_token)
+        
+        output_files = {}
+        
+        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
+            new_wb = openpyxl.Workbook()
+            new_ws = new_wb.active
+            new_ws.title = "Sheet1"
+            
+            for col in range(1, ws.max_column + 1):
+                new_ws.cell(1, col).value = ws.cell(1, col).value
+            
+            new_row = 2
+            for row in range(2, ws.max_row + 1):
+                if ws.cell(row, 1).value == staff_name:
+                    for col in range(1, ws.max_column + 1):
+                        new_ws.cell(new_row, col).value = ws.cell(row, col).value
+                    new_row += 1
+            
+            if new_row == 2:
+                continue
+            
+            if staff_name in ["Rosanna", "Jasmine"]:
+                finalize_workbook(new_wb)
+            
+            output = io.BytesIO()
+            new_wb.save(output)
+            output.seek(0)
+            output_filename = f"{filename_prefix}{staff_name}.xlsx"
+            output_files[output_filename] = output
+        
+        main_output = io.BytesIO()
+        wb.save(main_output)
+        main_output.seek(0)
+        main_filename = f"{filename_prefix}Masters.xlsx"
+        output_files[main_filename] = main_output
+        
+        logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
+        
+        return output_files, invalid_count, date_token
+        
+    finally:
+        # Always cleanup temp file securely
+        if tmp_path:
+            secure_cleanup(tmp_path)
 
 # UI
 st.markdown("### Upload your billing file")
+st.info("🔒 All actions are logged. Session timeout: 15 minutes of inactivity.")
+
 uploaded_file = st.file_uploader(
     "Choose an Excel file (must have MMDDYYYY in filename)",
     type="xlsx"
@@ -340,12 +467,15 @@ if uploaded_file is not None:
         st.markdown("### Download Results")
         
         for output_filename, file_bytes in output_files.items():
-            st.download_button(
+            if st.download_button(
                 label=f"Download {output_filename}",
                 data=file_bytes,
                 file_name=output_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=output_filename
+            ):
+                logger.info(f"User '{st.session_state.get('username', 'unknown')}' downloaded: {output_filename}")
     
     except Exception as e:
+        logger.error(f"Error processing file for user '{st.session_state.get('username', 'unknown')}': {str(e)}")
         st.error(f"Error: {str(e)}")

@@ -23,3 +23,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+
+# Audit logs (sensitive)
+audit_logs/
+*.log
