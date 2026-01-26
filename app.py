@@ -3,13 +3,89 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 import tempfile
-from billing_rules import is_non_billable_service_for_weekday
+import os
+import hashlib
+import logging
+from pathlib import Path
+
+# Configure audit logging
+LOG_DIR = Path("audit_logs")
+LOG_DIR.mkdir(exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_DIR / f"audit_{datetime.now().strftime('%Y%m%d')}.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Unbilled Billing App", layout="wide")
+
+# Security: Session timeout (15 minutes of inactivity)
+SESSION_TIMEOUT_MINUTES = 15
+
+def check_password():
+    """Returns True if user has entered correct password."""
+    def password_entered():
+        """Checks whether password entered is correct."""
+        # Simple password check - in production, use environment variable or secure vault
+        # Hash the password for basic security
+        entered_hash = hashlib.sha256(st.session_state["password"].encode()).hexdigest()
+        # Default password: "billing2026" (hash stored)
+        correct_hash = "e007fbdc563042ac6aa9dcdfc979b2a8233938d600c412c2b2ad00a273ddd0d1"
+        
+        if entered_hash == correct_hash:
+            st.session_state["password_correct"] = True
+            st.session_state["last_activity"] = datetime.now()
+            st.session_state["username"] = st.session_state.get("username_input", "user")
+            logger.info(f"User '{st.session_state['username']}' logged in successfully")
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+            logger.warning(f"Failed login attempt for user '{st.session_state.get('username_input', 'unknown')}'")
+
+    # Check for session timeout
+    if "last_activity" in st.session_state:
+        time_since_activity = datetime.now() - st.session_state["last_activity"]
+        if time_since_activity > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
+            st.session_state["password_correct"] = False
+            logger.info(f"Session timeout for user '{st.session_state.get('username', 'unknown')}'")
+            st.warning("Session expired due to inactivity. Please log in again.")
+    
+    # Update last activity
+    if st.session_state.get("password_correct", False):
+        st.session_state["last_activity"] = datetime.now()
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.title("🔒 Secure Login")
+    st.markdown("### PHI Access Control")
+    st.info("⚠️ This application processes Protected Health Information (PHI). Authorized users only.")
+    
+    st.text_input("Username", key="username_input")
+    st.text_input("Password", type="password", on_change=password_entered, key="password")
+    
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("😕 Incorrect username or password")
+    
+    st.markdown("---")
+    st.caption("Default credentials: username='admin', password='billing2026'")
+    st.caption("⚠️ Change default password in production deployment")
+    
+    return False
+
+if not check_password():
+    st.stop()
+
+# User is authenticated - show main app
 st.title("Unbilled Billing Processor")
+st.markdown(f"👤 Logged in as: **{st.session_state.get('username', 'user')}**")
 st.markdown("Upload your billing file to process it automatically")
 
 
@@ -20,6 +96,51 @@ def extract_date_from_filename(filename):
         return match.group(1)
     return None
 
+def _is_ecare(service_lower: str) -> bool:
+    """
+    Check if service is e-care (case-insensitive).
+    Handles variants: 'e-care', 'e care', 'ecare'
+    """
+    return any(variant in service_lower for variant in ['e-care', 'e care', 'ecare'])
+
+def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
+    """
+    Determine if a service is non-billable for a given weekday.
+    
+    Weekday rules:
+    - Tuesday (1): Everything billable (including e-care)
+    - Monday (0): Non-billable: partial hospitalization, residential, detox, e-care
+    - Wednesday-Friday (2,3,4): All services billable except e-care
+    - Saturday-Sunday (5,6): e-care non-billable (treat like Wed-Fri)
+    
+    E-care is only billable on Tuesdays.
+    
+    Args:
+        service: Service name (case-insensitive matching)
+        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+    
+    Returns:
+        True if service is non-billable for the given weekday
+    """
+    service_lower = service.lower()
+    
+    # Tuesday: everything billable
+    if weekday == 1:
+        return False
+    
+    # Monday: non-billable services
+    if weekday == 0:
+        if _is_ecare(service_lower):
+            return True
+        if any(s in service_lower for s in ['partial hospitalization', 'residential', 'detox']):
+            return True
+        return False
+    
+    # Wednesday-Sunday (2,3,4,5,6): e-care non-billable
+    if weekday in [2, 3, 4, 5, 6]:
+        return _is_ecare(service_lower)
+    
+    return False
 
 def get_filename_prefix(filename):
     """Extract the prefix before the date in filename"""
@@ -81,7 +202,15 @@ def step_1_extract_invalid(ws):
     return len(invalid_rows)
 
 def assign_staff(ws, date_token: str = None):
-    """Assign staff names based on business rules"""
+    """
+    Assign staff names based on business rules.
+    
+    Args:
+        ws: Worksheet to process
+        date_token: Optional date string in MMDDYYYY format from filename.
+                   If provided, used to determine weekday for non-billable logic.
+                   If not provided or parsing fails, falls back to current date.
+    """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
@@ -101,29 +230,29 @@ def assign_staff(ws, date_token: str = None):
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
     
-    # Compute weekday from date_token (MMDDYYYY) or fall back to today
+    # Parse weekday from date_token or fallback to current date
     if date_token:
         try:
             file_date = datetime.strptime(date_token, '%m%d%Y')
-            weekday = file_date.weekday()
-        except ValueError:
-            print(f"Warning: Could not parse date_token '{date_token}', using today's date")
-            weekday = datetime.now().weekday()
+            day_of_week = file_date.weekday()
+            print(f"Using file date {date_token} (weekday={day_of_week})")
+        except (ValueError, TypeError) as e:
+            print(f"Failed to parse date_token '{date_token}': {e}. Using current date.")
+            day_of_week = datetime.now().weekday()
     else:
-        print("Warning: No date_token provided, using today's date for weekday rules")
-        weekday = datetime.now().weekday()
+        day_of_week = datetime.now().weekday()
+        print(f"No date_token provided, using current date (weekday={day_of_week})")
     
     # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
-        service = str(ws.cell(row, cols['service']).value or "")
-        service_lower = service.lower()
+        service = str(ws.cell(row, cols['service']).value or "").strip()
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
 
         staff = None
         
-        # Check if service is non-billable for this day using the new helper
-        is_non_billable = is_non_billable_service_for_weekday(service, weekday)
+        # Check if service is non-billable for this weekday
+        is_non_billable = is_non_billable_service_for_weekday(service, day_of_week)
         
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
@@ -140,6 +269,7 @@ def assign_staff(ws, date_token: str = None):
 
         # Melissa: (Detox or Residential) + (Aetna or Humana)
         if not staff:
+            service_lower = service.lower()
             has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             has_insurance = "aetna" in payer or "humana" in payer
 
@@ -152,6 +282,7 @@ def assign_staff(ws, date_token: str = None):
 
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
+            service_lower = service.lower()
             if ("iop" in service_lower or 
                 service_lower.startswith("acupuncture") or 
                 "partial hospitalization" in service_lower):
@@ -159,6 +290,7 @@ def assign_staff(ws, date_token: str = None):
 
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
+            service_lower = service.lower()
             if ("detox" in service_lower or 
                 service_lower.startswith("drug screen 13 panel") or 
                 service_lower.startswith("residential")):
@@ -206,68 +338,114 @@ def finalize_workbook(wb):
     for col in range(1, ws.max_column + 1):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
+def validate_uploaded_file(uploaded_file):
+    """Validate uploaded file for security."""
+    # Check file size (max 50MB)
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+    file_size = len(uploaded_file.getvalue())
+    
+    if file_size > MAX_FILE_SIZE:
+        raise ValueError(f"File too large ({file_size/1024/1024:.1f}MB). Maximum allowed: 50MB")
+    
+    # Validate file extension
+    if not uploaded_file.name.endswith('.xlsx'):
+        raise ValueError("Only .xlsx files are allowed")
+    
+    # Check for suspicious patterns in filename
+    suspicious_patterns = ['..', '/', '\\', '<', '>', '|', ':', '*', '?', '"']
+    if any(pattern in uploaded_file.name for pattern in suspicious_patterns):
+        raise ValueError("Filename contains invalid characters")
+    
+    logger.info(f"User '{st.session_state.get('username', 'unknown')}' uploaded file: {uploaded_file.name} ({file_size} bytes)")
+    return True
+
+def secure_cleanup(file_path):
+    """Securely delete temporary file."""
+    try:
+        if os.path.exists(file_path):
+            # Overwrite with random data before deletion (simple secure delete)
+            with open(file_path, 'ba+', buffering=0) as f:
+                length = f.tell()
+                f.seek(0)
+                f.write(os.urandom(length))
+            os.remove(file_path)
+            logger.info(f"Securely deleted temp file: {file_path}")
+    except Exception as e:
+        logger.error(f"Error during secure cleanup: {e}")
 
 def process_workbook(uploaded_file):
-    """Process the uploaded workbook"""
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-        tmp.write(uploaded_file.getbuffer())
-        tmp_path = tmp.name
-
-    wb = openpyxl.load_workbook(tmp_path)
-    ws = wb.active
-
-    date_token = extract_date_from_filename(uploaded_file.name)
-    date_fallback = False
-    if not date_token:
-        # No valid date found, will use today's date in assign_staff
-        date_fallback = True
-    
-    filename_prefix = get_filename_prefix(uploaded_file.name)
-
-    invalid_count = step_1_extract_invalid(ws)
-    assign_staff(ws, date_token)
-    
-    output_files = {}
-
-    for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
-        new_wb = openpyxl.Workbook()
-        new_ws = new_wb.active
-        new_ws.title = "Sheet1"
-
-        for col in range(1, ws.max_column + 1):
-            new_ws.cell(1, col).value = ws.cell(1, col).value
-
-        new_row = 2
-        for row in range(2, ws.max_row + 1):
-            if ws.cell(row, 1).value == staff_name:
-                for col in range(1, ws.max_column + 1):
-                    new_ws.cell(new_row, col).value = ws.cell(row, col).value
-                new_row += 1
-
-        if new_row == 2:
-            continue
-
-        if staff_name in ["Rosanna", "Jasmine"]:
-            finalize_workbook(new_wb)
-
-        output = io.BytesIO()
-        new_wb.save(output)
-        output.seek(0)
-        output_filename = f"{filename_prefix}{staff_name}.xlsx"
-        output_files[output_filename] = output
-
-    main_output = io.BytesIO()
-    wb.save(main_output)
-    main_output.seek(0)
-    main_filename = f"{filename_prefix}Masters.xlsx"
-    output_files[main_filename] = main_output
-    
-    return output_files, invalid_count, date_token, date_fallback
-
+    """Process the uploaded workbook with security controls"""
+    tmp_path = None
+    try:
+        # Validate file first
+        validate_uploaded_file(uploaded_file)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            tmp.write(uploaded_file.getbuffer())
+            tmp_path = tmp.name
+        
+        logger.info(f"Processing file: {uploaded_file.name} (temp: {tmp_path})")
+        
+        wb = openpyxl.load_workbook(tmp_path)
+        ws = wb.active
+        
+        date_token = extract_date_from_filename(uploaded_file.name)
+        if not date_token:
+            raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
+        
+        filename_prefix = get_filename_prefix(uploaded_file.name)
+        
+        invalid_count = step_1_extract_invalid(ws)
+        assign_staff(ws, date_token)
+        
+        output_files = {}
+        
+        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
+            new_wb = openpyxl.Workbook()
+            new_ws = new_wb.active
+            new_ws.title = "Sheet1"
+            
+            for col in range(1, ws.max_column + 1):
+                new_ws.cell(1, col).value = ws.cell(1, col).value
+            
+            new_row = 2
+            for row in range(2, ws.max_row + 1):
+                if ws.cell(row, 1).value == staff_name:
+                    for col in range(1, ws.max_column + 1):
+                        new_ws.cell(new_row, col).value = ws.cell(row, col).value
+                    new_row += 1
+            
+            if new_row == 2:
+                continue
+            
+            if staff_name in ["Rosanna", "Jasmine"]:
+                finalize_workbook(new_wb)
+            
+            output = io.BytesIO()
+            new_wb.save(output)
+            output.seek(0)
+            output_filename = f"{filename_prefix}{staff_name}.xlsx"
+            output_files[output_filename] = output
+        
+        main_output = io.BytesIO()
+        wb.save(main_output)
+        main_output.seek(0)
+        main_filename = f"{filename_prefix}Masters.xlsx"
+        output_files[main_filename] = main_output
+        
+        logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
+        
+        return output_files, invalid_count, date_token
+        
+    finally:
+        # Always cleanup temp file securely
+        if tmp_path:
+            secure_cleanup(tmp_path)
 
 # UI
 st.markdown("### Upload your billing file")
+st.info("🔒 All actions are logged. Session timeout: 15 minutes of inactivity.")
+
 uploaded_file = st.file_uploader(
     "Choose an Excel file (must have MMDDYYYY in filename)",
     type="xlsx"
@@ -296,12 +474,15 @@ if uploaded_file is not None:
         st.markdown("### Download Results")
         
         for output_filename, file_bytes in output_files.items():
-            st.download_button(
+            if st.download_button(
                 label=f"Download {output_filename}",
                 data=file_bytes,
                 file_name=output_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=output_filename
+            ):
+                logger.info(f"User '{st.session_state.get('username', 'unknown')}' downloaded: {output_filename}")
     
     except Exception as e:
+        logger.error(f"Error processing file for user '{st.session_state.get('username', 'unknown')}': {str(e)}")
         st.error(f"Error: {str(e)}")

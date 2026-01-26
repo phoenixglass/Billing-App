@@ -4,33 +4,17 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
 # Virtual environments
 venv/
-ENV/
 env/
+ENV/
 
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
@@ -38,4 +22,8 @@ Thumbs.db
 
 # Temporary files
 *.tmp
+*.bak
+
+# Audit logs (sensitive)
+audit_logs/
 *.log

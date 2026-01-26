@@ -15,6 +15,52 @@ def extract_date_from_filename(filename):
         return match.group(1)
     return None
 
+def _is_ecare(service_lower: str) -> bool:
+    """
+    Check if service is e-care (case-insensitive).
+    Handles variants: 'e-care', 'e care', 'ecare'
+    """
+    return any(variant in service_lower for variant in ['e-care', 'e care', 'ecare'])
+
+def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
+    """
+    Determine if a service is non-billable for a given weekday.
+    
+    Weekday rules:
+    - Tuesday (1): Everything billable (including e-care)
+    - Monday (0): Non-billable: partial hospitalization, residential, detox, e-care
+    - Wednesday-Friday (2,3,4): All services billable except e-care
+    - Saturday-Sunday (5,6): e-care non-billable (treat like Wed-Fri)
+    
+    E-care is only billable on Tuesdays.
+    
+    Args:
+        service: Service name (case-insensitive matching)
+        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+    
+    Returns:
+        True if service is non-billable for the given weekday
+    """
+    service_lower = service.lower()
+    
+    # Tuesday: everything billable
+    if weekday == 1:
+        return False
+    
+    # Monday: non-billable services
+    if weekday == 0:
+        if _is_ecare(service_lower):
+            return True
+        if any(s in service_lower for s in ['partial hospitalization', 'residential', 'detox']):
+            return True
+        return False
+    
+    # Wednesday-Sunday (2,3,4,5,6): e-care non-billable
+    if weekday in [2, 3, 4, 5, 6]:
+        return _is_ecare(service_lower)
+    
+    return False
+
 def get_save_folder(workbook_path, date_token):
     """Build save path: ...\\Unbilled Reports\\YYYY\\MM - Month YYYY\\MMDDYYYY"""
     wb_path = Path(workbook_path)
@@ -97,7 +143,16 @@ def step_1_extract_invalid(ws):
     return len(invalid_rows)
 
 def assign_staff(ws, date_token: str = None):
-    """Assign staff names based on business rules"""
+    """
+    Assign staff names based on business rules.
+    
+    Args:
+        ws: Worksheet to process
+        date_token: Optional date string in MMDDYYYY format from filename.
+                   If provided, used to determine weekday for non-billable logic.
+                   If not provided or parsing fails, falls back to current date.
+    """
+    
     # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
     for col in range(1, ws.max_column + 1):
@@ -116,32 +171,32 @@ def assign_staff(ws, date_token: str = None):
     if not all(k in cols for k in ['group', 'groupfld1', 'service', 'payer', 'billing_provider']):
         raise ValueError("Missing required columns: GROUPFLD2, GROUPFLD1, Service, Payer, or Billing Provider")
     
-    # Compute weekday from date_token (MMDDYYYY) or fall back to today
+    # Parse weekday from date_token or fallback to current date
     if date_token:
         try:
             file_date = datetime.strptime(date_token, '%m%d%Y')
-            weekday = file_date.weekday()
-        except ValueError:
-            print(f"Warning: Could not parse date_token '{date_token}', using today's date")
-            weekday = datetime.now().weekday()
+            day_of_week = file_date.weekday()
+            print(f"Using file date {date_token} (weekday={day_of_week})")
+        except (ValueError, TypeError) as e:
+            print(f"Failed to parse date_token '{date_token}': {e}. Using current date.")
+            day_of_week = datetime.now().weekday()
     else:
-        print("Warning: No date_token provided, using today's date for weekday rules")
-        weekday = datetime.now().weekday()
+        day_of_week = datetime.now().weekday()
+        print(f"No date_token provided, using current date (weekday={day_of_week})")
     
     # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
         groupfld1 = str(ws.cell(row, cols['groupfld1']).value or "").strip()
-        service = str(ws.cell(row, cols['service']).value or "")
-        service_lower = service.lower()
+        service = str(ws.cell(row, cols['service']).value or "").strip()
         payer = str(ws.cell(row, cols['payer']).value or "")
         payer_lower = payer.lower()
         billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
 
         staff = None
         
-        # Check if service is non-billable for this day using the new helper
-        is_non_billable = is_non_billable_service_for_weekday(service, weekday)
+        # Check if service is non-billable for this weekday
+        is_non_billable = is_non_billable_service_for_weekday(service, day_of_week)
         
         # Unable to Bill: O'Flynn + OP Chappaqua or OP NYC
         if billing_provider == "O'Flynn, Karen":
