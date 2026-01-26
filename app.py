@@ -88,6 +88,7 @@ st.title("Unbilled Billing Processor")
 st.markdown(f"👤 Logged in as: **{st.session_state.get('username', 'user')}**")
 st.markdown("Upload your billing file to process it automatically")
 
+
 def extract_date_from_filename(filename):
     """Extract MMDDYYYY date from filename"""
     match = re.search(r'(\d{8})', filename)
@@ -154,49 +155,50 @@ def get_filename_prefix(filename):
         return prefix
     return ""
 
+
 def step_1_extract_invalid(ws):
     """Insert Staff/Status, extract Invalid rows to new sheet, delete from main"""
-    
+
     if ws.cell(1, 1).value != "Staff/Status":
         ws.insert_cols(1)
         ws.cell(1, 1).value = "Staff/Status"
-    
+
     billable_col = None
     for col in range(1, ws.max_column + 1):
         if ws.cell(1, col).value == "Billable Status":
             billable_col = col
             break
-    
+
     if not billable_col:
         raise ValueError("Billable Status column not found")
-    
+
     invalid_rows = []
     for row in range(2, ws.max_row + 1):
         if ws.cell(row, billable_col).value == "Invalid for Billing":
             invalid_rows.append(row)
-    
+
     if not invalid_rows:
         return None
-    
+
     wb = ws.parent
     if "Invalid" in wb.sheetnames:
         del wb["Invalid"]
-    
+
     ws_invalid = wb.create_sheet("Invalid")
-    
+
     for col in range(1, ws.max_column + 1):
         ws_invalid.cell(1, col).value = ws.cell(1, col).value
-    
+
     for idx, row_num in enumerate(invalid_rows, start=2):
         for col in range(1, ws.max_column + 1):
             ws_invalid.cell(idx, col).value = ws.cell(row_num, col).value
-    
+
     for row_num in reversed(invalid_rows):
         ws.delete_rows(row_num)
-    
+
     ws.cell(1, 1).font = openpyxl.styles.Font(bold=True)
     ws.auto_filter.ref = ws.dimensions
-    
+
     return len(invalid_rows)
 
 def assign_staff(ws, date_token: str = None):
@@ -224,7 +226,7 @@ def assign_staff(ws, date_token: str = None):
             cols['payer'] = col
         elif header == "Billing Provider":
             cols['billing_provider'] = col
-    
+
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
     
@@ -246,7 +248,7 @@ def assign_staff(ws, date_token: str = None):
         group = str(ws.cell(row, cols['group']).value or "").strip()
         service = str(ws.cell(row, cols['service']).value or "").strip()
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
-        
+
         staff = None
         
         # Check if service is non-billable for this weekday
@@ -256,28 +258,28 @@ def assign_staff(ws, date_token: str = None):
         if 'billing_provider' in cols and 'group_fld1' in cols:
             billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
             group_fld1 = str(ws.cell(row, cols['group_fld1']).value or "").strip()
-            
-            if (billing_provider == "O'Flynn, Karen" and 
+
+            if (billing_provider == "O'Flynn, Karen" and
                 (group_fld1 == "OP Chappaqua" or group_fld1 == "OP NYC")):
                 staff = "Unable to Bill"
-        
+
         # Unable to Bill: Non-billable service for this day of week
         if not staff and is_non_billable:
             staff = "Unable to Bill"
-        
+
         # Melissa: (Detox or Residential) + (Aetna or Humana)
         if not staff:
             service_lower = service.lower()
             has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             has_insurance = "aetna" in payer or "humana" in payer
-            
+
             if has_detox_res and has_insurance:
                 staff = "Melissa"
-        
+
         # CB: Self Pay
         if not staff and group == "Self Pay":
             staff = "CB"
-        
+
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
             service_lower = service.lower()
@@ -285,7 +287,7 @@ def assign_staff(ws, date_token: str = None):
                 service_lower.startswith("acupuncture") or 
                 "partial hospitalization" in service_lower):
                 staff = "Rosanna"
-        
+
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
             service_lower = service.lower()
@@ -293,44 +295,45 @@ def assign_staff(ws, date_token: str = None):
                 service_lower.startswith("drug screen 13 panel") or 
                 service_lower.startswith("residential")):
                 staff = "Jasmine"
-        
+
         # Rosanna_2: Fill remaining blanks
         if not staff:
             staff = "Rosanna"
-        
+
         ws.cell(row, 1).value = staff
-    
+
     print("Staff assignment complete")
+
 
 def finalize_workbook(wb):
     """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
     ws = wb.active
-    
+
     # Bold header row
     for col in range(1, ws.max_column + 1):
         ws.cell(1, col).font = openpyxl.styles.Font(bold=True)
-    
+
     # Insert two columns at E
     ws.insert_cols(5, 2)
     ws.cell(1, 5).value = "Status"
     ws.cell(1, 6).value = "Comments"
     ws.cell(1, 5).font = openpyxl.styles.Font(bold=True)
     ws.cell(1, 6).font = openpyxl.styles.Font(bold=True)
-    
+
     # Create Sheet2 with validation list
     ws_list = wb.create_sheet("Sheet2")
     ws_list['A1'] = "Billed"
     ws_list['A2'] = "Unable to Bill"
     ws_list['A3'] = "Contractual Adj"
     ws_list['A4'] = "Incomplete Billings"
-    
+
     # Add data validation to Status column
     dv = DataValidation(type="list", formula1="=Sheet2!$A$1:$A$4", allow_blank=True)
     ws.add_data_validation(dv)
-    
+
     last_row = ws.max_row
     dv.add(f'E2:E{last_row}')
-    
+
     # Widen columns to fit all text
     for col in range(1, ws.max_column + 1):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
@@ -451,13 +454,17 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token = process_workbook(uploaded_file)
+        output_files, invalid_count, date_token, date_fallback = process_workbook(uploaded_file)
+        
+        # Show warning if date fallback occurred
+        if date_fallback:
+            st.warning("⚠️ Filename did not contain a valid MMDDYYYY date; using today's date for weekday rules")
         
         st.success("✓ Processing complete!")
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Date Extracted", date_token)
+            st.metric("Date Extracted", date_token if date_token else "Today's date")
         with col2:
             st.metric("Invalid Rows", invalid_count or 0)
         with col3:
