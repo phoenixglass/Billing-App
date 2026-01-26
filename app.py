@@ -114,6 +114,7 @@ def assign_staff(ws, date_token: str = None):
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
         service = str(ws.cell(row, cols['service']).value or "")
+        service_lower = service.lower()
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
         
         staff = None
@@ -136,7 +137,6 @@ def assign_staff(ws, date_token: str = None):
         
         # Melissa: (Detox or Residential) + (Aetna or Humana)
         if not staff:
-            service_lower = service.lower()
             has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             has_insurance = "aetna" in payer or "humana" in payer
             
@@ -149,7 +149,6 @@ def assign_staff(ws, date_token: str = None):
         
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
-            service_lower = service.lower()
             if ("iop" in service_lower or 
                 service_lower.startswith("acupuncture") or 
                 "partial hospitalization" in service_lower):
@@ -157,7 +156,6 @@ def assign_staff(ws, date_token: str = None):
         
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            service_lower = service.lower()
             if ("detox" in service_lower or 
                 service_lower.startswith("drug screen 13 panel") or 
                 service_lower.startswith("residential")):

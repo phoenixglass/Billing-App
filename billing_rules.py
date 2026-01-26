@@ -1,7 +1,6 @@
 """
 Billing rules for weekday-based non-billable service logic.
 """
-from datetime import datetime
 
 
 def _is_ecare(service: str) -> bool:

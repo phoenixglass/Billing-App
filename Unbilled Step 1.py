@@ -132,7 +132,9 @@ def assign_staff(ws, date_token: str = None):
         group = str(ws.cell(row, cols['group']).value or "").strip()
         groupfld1 = str(ws.cell(row, cols['groupfld1']).value or "").strip()
         service = str(ws.cell(row, cols['service']).value or "")
+        service_lower = service.lower()
         payer = str(ws.cell(row, cols['payer']).value or "")
+        payer_lower = payer.lower()
         billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
         
         staff = None
@@ -155,26 +157,26 @@ def assign_staff(ws, date_token: str = None):
         
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
-            if ("IOP" in service or 
-                service.startswith("Acupuncture") or 
-                "Partial Hospitalization" in service):
+            if ("iop" in service_lower or 
+                service_lower.startswith("acupuncture") or 
+                "partial hospitalization" in service_lower):
                 staff = "Rosanna"
         
         # Melissa: (Detox or Residential but NOT Drug Screen) + (Aetna or Humana)
         # CHECK MELISSA BEFORE JASMINE - she's more specific
         if not staff:
-            has_detox_res = ("Detox" in service or "Residential" in service)
-            no_drug_screen = "Drug Screen" not in service
-            has_insurance = "Aetna" in payer or "Humana" in payer
+            has_detox_res = ("detox" in service_lower or "residential" in service_lower)
+            no_drug_screen = "drug screen" not in service_lower
+            has_insurance = "aetna" in payer_lower or "humana" in payer_lower
             
             if has_detox_res and no_drug_screen and has_insurance:
                 staff = "Melissa"
         
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            if (service.startswith("Detox") or 
-                service.startswith("Drug Screen 13 Panel") or 
-                service.startswith("Residential")):
+            if (service_lower.startswith("detox") or 
+                service_lower.startswith("drug screen 13 panel") or 
+                service_lower.startswith("residential")):
                 staff = "Jasmine"
         
         # Rosanna_2: Fill remaining blanks
