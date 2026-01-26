@@ -4,6 +4,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from pathlib import Path
 import re
 from datetime import datetime
+from billing_rules import is_non_billable_service_for_weekday
 
 stubs_required = False  # no Streamlit in the standalone script; keep for parity if needed
 
@@ -95,9 +96,6 @@ def step_1_extract_invalid(ws):
     print(f"Extracted {len(invalid_rows)} invalid rows to 'Invalid' sheet")
     return len(invalid_rows)
 
-# Import billing rules helpers (keeps tests simple)
-from billing_rules import parse_weekday_from_token, is_non_billable_service_for_weekday
-
 def assign_staff(ws, date_token: str = None):
     """Assign staff names based on business rules"""
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -117,57 +115,69 @@ def assign_staff(ws, date_token: str = None):
 
     if not all(k in cols for k in ['group', 'groupfld1', 'service', 'payer', 'billing_provider']):
         raise ValueError("Missing required columns: GROUPFLD2, GROUPFLD1, Service, Payer, or Billing Provider")
-
-    weekday, did_fallback = parse_weekday_from_token(date_token)
-    if did_fallback:
-        print("Warning: filename date missing or invalid. Falling back to today's date for weekday rules.")
-
+    
+    # Compute weekday from date_token (MMDDYYYY) or fall back to today
+    if date_token:
+        try:
+            file_date = datetime.strptime(date_token, '%m%d%Y')
+            weekday = file_date.weekday()
+        except ValueError:
+            print(f"Warning: Could not parse date_token '{date_token}', using today's date")
+            weekday = datetime.now().weekday()
+    else:
+        print("Warning: No date_token provided, using today's date for weekday rules")
+        weekday = datetime.now().weekday()
+    
     # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
         groupfld1 = str(ws.cell(row, cols['groupfld1']).value or "").strip()
         service = str(ws.cell(row, cols['service']).value or "")
+        service_lower = service.lower()
         payer = str(ws.cell(row, cols['payer']).value or "")
+        payer_lower = payer.lower()
         billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
 
         staff = None
-
+        
+        # Check if service is non-billable for this day using the new helper
+        is_non_billable = is_non_billable_service_for_weekday(service, weekday)
+        
         # Unable to Bill: O'Flynn + OP Chappaqua or OP NYC
         if billing_provider == "O'Flynn, Karen":
             if groupfld1 == "OP Chappaqua" or groupfld1 == "OP NYC":
                 staff = "Unable to Bill"
-
-        # Non-billable based on file date weekday
-        is_non_billable = is_non_billable_service_for_weekday(service, weekday)
+        
+        # Unable to Bill: Non-billable service for this day of week
         if not staff and is_non_billable:
             staff = "Unable to Bill"
-
+        
         # CB: Self Pay
         if not staff and group == "Self Pay":
             staff = "CB"
 
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
-            if ("IOP" in service or
-                service.startswith("Acupuncture") or
-                "Partial Hospitalization" in service):
+            if ("iop" in service_lower or 
+                service_lower.startswith("acupuncture") or 
+                "partial hospitalization" in service_lower):
                 staff = "Rosanna"
 
         # Melissa: (Detox or Residential but NOT Drug Screen) + (Aetna or Humana)
         # CHECK MELISSA BEFORE JASMINE - she's more specific
         if not staff:
-            has_detox_res = ("Detox" in service or "Residential" in service)
-            no_drug_screen = "Drug Screen" not in service
-            has_insurance = "Aetna" in payer or "Humana" in payer
-
+            has_detox_res = ("detox" in service_lower or "residential" in service_lower)
+            no_drug_screen = "drug screen" not in service_lower
+            has_insurance = "aetna" in payer_lower or "humana" in payer_lower
+            
             if has_detox_res and no_drug_screen and has_insurance:
                 staff = "Melissa"
 
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            if (service.startswith("Detox") or
-                service.startswith("Drug Screen 13 Panel") or
-                service.startswith("Residential")):
+            if (service_lower.startswith("detox") or 
+                service_lower.startswith("drug screen 13 panel") or 
+                service_lower.startswith("residential")):
                 staff = "Jasmine"
 
         # Rosanna_2: Fill remaining blanks
@@ -254,24 +264,26 @@ def main(workbook_path):
     # Extract date token
     date_token = extract_date_from_filename(Path(workbook_path).name)
     if not date_token:
-        print("Warning: Could not extract date (MMDDYYYY) from filename. Using today's date for weekday rules.")
-        date_token = None
-
-    print(f"Processing file with date: {date_token}")
-
+        print("Warning: Could not extract date (MMDDYYYY) from filename, will use today's date")
+    
+    print(f"Processing file with date: {date_token if date_token else 'today'}")
+    
     # Step 1: Extract invalid
     step_1_extract_invalid(ws)
 
     # Step 2-6: Assign staff
     assign_staff(ws, date_token)
-
+    
     # Save main workbook
     wb.save(workbook_path)
     print(f"Saved main workbook: {workbook_path}")
-
-    # Step 7: Export individual workbooks
-    export_staff_workbooks(wb, workbook_path, date_token)
-
+    
+    # Step 7: Export individual workbooks (only if date_token is available)
+    if date_token:
+        export_staff_workbooks(wb, workbook_path, date_token)
+    else:
+        print("Skipping individual workbook export due to missing date token")
+    
     print("\n✓ All done!")
 
 if __name__ == "__main__":

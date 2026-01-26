@@ -6,12 +6,11 @@ import re
 from datetime import datetime
 import io
 import tempfile
+from billing_rules import is_non_billable_service_for_weekday
 
 st.set_page_config(page_title="Unbilled Billing App", layout="wide")
 st.title("Unbilled Billing Processor")
 st.markdown("Upload your billing file to process it automatically")
-
-from billing_rules import parse_weekday_from_token, is_non_billable_service_for_weekday
 
 
 def extract_date_from_filename(filename):
@@ -81,13 +80,9 @@ def step_1_extract_invalid(ws):
 
     return len(invalid_rows)
 
-
 def assign_staff(ws, date_token: str = None):
-    """Assign staff names based on business rules.
-
-    If date_token (MMDDYYYY) is provided, use that date to determine weekday.
-    If date_token is missing/invalid we fall back to today's date.
-    """
+    """Assign staff names based on business rules"""
+    
     # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
     for col in range(1, ws.max_column + 1):
@@ -105,17 +100,19 @@ def assign_staff(ws, date_token: str = None):
 
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
-
-    # Determine weekday from the file date token (or fallback)
-    weekday, did_fallback = parse_weekday_from_token(date_token)
-
-    if did_fallback:
-        # Show a visible warning in the Streamlit UI for fallback
+    
+    # Compute weekday from date_token (MMDDYYYY) or fall back to today
+    if date_token:
         try:
-            st.warning("Filename did not contain a valid MMDDYYYY date; using today's date for weekday rules")
-        except Exception:
-            pass
-
+            file_date = datetime.strptime(date_token, '%m%d%Y')
+            weekday = file_date.weekday()
+        except ValueError:
+            print(f"Warning: Could not parse date_token '{date_token}', using today's date")
+            weekday = datetime.now().weekday()
+    else:
+        print("Warning: No date_token provided, using today's date for weekday rules")
+        weekday = datetime.now().weekday()
+    
     # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
@@ -124,10 +121,10 @@ def assign_staff(ws, date_token: str = None):
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
 
         staff = None
-
-        # Check if service is non-billable for this weekday
+        
+        # Check if service is non-billable for this day using the new helper
         is_non_billable = is_non_billable_service_for_weekday(service, weekday)
-
+        
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
             billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
@@ -155,15 +152,15 @@ def assign_staff(ws, date_token: str = None):
 
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
-            if ("iop" in service_lower or
-                service_lower.startswith("acupuncture") or
+            if ("iop" in service_lower or 
+                service_lower.startswith("acupuncture") or 
                 "partial hospitalization" in service_lower):
                 staff = "Rosanna"
 
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            if ("detox" in service_lower or
-                service_lower.startswith("drug screen 13 panel") or
+            if ("detox" in service_lower or 
+                service_lower.startswith("drug screen 13 panel") or 
                 service_lower.startswith("residential")):
                 staff = "Jasmine"
 
@@ -221,15 +218,16 @@ def process_workbook(uploaded_file):
     ws = wb.active
 
     date_token = extract_date_from_filename(uploaded_file.name)
-    # We intentionally do not raise if missing; assign_staff will fall back and warn
+    date_fallback = False
     if not date_token:
-        date_token = None
-
+        # No valid date found, will use today's date in assign_staff
+        date_fallback = True
+    
     filename_prefix = get_filename_prefix(uploaded_file.name)
 
     invalid_count = step_1_extract_invalid(ws)
     assign_staff(ws, date_token)
-
+    
     output_files = {}
 
     for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
@@ -264,9 +262,46 @@ def process_workbook(uploaded_file):
     main_output.seek(0)
     main_filename = f"{filename_prefix}Masters.xlsx"
     output_files[main_filename] = main_output
-
-    return output_files, invalid_count, date_token
+    
+    return output_files, invalid_count, date_token, date_fallback
 
 
 # UI
 st.markdown("### Upload your billing file")
+uploaded_file = st.file_uploader(
+    "Choose an Excel file (must have MMDDYYYY in filename)",
+    type="xlsx"
+)
+
+if uploaded_file is not None:
+    try:
+        st.info("Processing your file...")
+        output_files, invalid_count, date_token, date_fallback = process_workbook(uploaded_file)
+        
+        # Show warning if date fallback occurred
+        if date_fallback:
+            st.warning("⚠️ Filename did not contain a valid MMDDYYYY date; using today's date for weekday rules")
+        
+        st.success("✓ Processing complete!")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Date Extracted", date_token if date_token else "Today's date")
+        with col2:
+            st.metric("Invalid Rows", invalid_count or 0)
+        with col3:
+            st.metric("Files Generated", len(output_files))
+        
+        st.markdown("---")
+        st.markdown("### Download Results")
+        
+        for output_filename, file_bytes in output_files.items():
+            st.download_button(
+                label=f"Download {output_filename}",
+                data=file_bytes,
+                file_name=output_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+    
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
