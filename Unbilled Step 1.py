@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from billing_rules import is_non_billable_service_for_weekday
 
+stubs_required = False  # no Streamlit in the standalone script; keep for parity if needed
+
 def extract_date_from_filename(filename):
     """Extract MMDDYYYY date from filename"""
     match = re.search(r'(\d{8})', filename)
@@ -14,9 +16,9 @@ def extract_date_from_filename(filename):
     return None
 
 def get_save_folder(workbook_path, date_token):
-    """Build save path: ...\\Unbilled Reports\\YYYY\\MM - Month YYYY\\MMDDYYYY\\"""
+    """Build save path: ...\\Unbilled Reports\\YYYY\\MM - Month YYYY\\MMDDYYYY"""
     wb_path = Path(workbook_path)
-    
+
     # Find "Unbilled Reports" in the path
     parts = wb_path.parts
     try:
@@ -24,79 +26,78 @@ def get_save_folder(workbook_path, date_token):
         base = Path(*parts[:idx+1])
     except IndexError:
         raise ValueError("Workbook must be saved in a folder containing 'Unbilled Reports'")
-    
+
     # Parse date token: MMDDYYYY
     month = date_token[:2]
     day = date_token[2:4]
     year = date_token[4:]
-    
+
     dt = datetime.strptime(date_token, '%m%d%Y')
     month_name = dt.strftime('%B')
-    
+
     # Build: YYYY\\MM - Month YYYY\\MMDDYYYY
     save_path = base / year / f"{month} - {month_name} {year}" / date_token
     save_path.mkdir(parents=True, exist_ok=True)
-    
+
     return save_path
 
 def step_1_extract_invalid(ws):
     """Insert Staff/Status, extract Invalid rows to new sheet, delete from main"""
-    
+
     # Insert Staff/Status column if needed
     if ws.cell(1, 1).value != "Staff/Status":
         ws.insert_cols(1)
         ws.cell(1, 1).value = "Staff/Status"
-    
+
     # Find Billable Status column
     billable_col = None
     for col in range(1, ws.max_column + 1):
         if ws.cell(1, col).value == "Billable Status":
             billable_col = col
             break
-    
+
     if not billable_col:
         raise ValueError("Billable Status column not found")
-    
+
     # Find all invalid rows
     invalid_rows = []
     for row in range(2, ws.max_row + 1):
         if ws.cell(row, billable_col).value == "Invalid for Billing":
             invalid_rows.append(row)
-    
+
     if not invalid_rows:
         print("No invalid rows found")
         return None
-    
+
     # Create Invalid sheet
     wb = ws.parent
     if "Invalid" in wb.sheetnames:
         del wb["Invalid"]
-    
+
     ws_invalid = wb.create_sheet("Invalid")
-    
+
     # Copy header
     for col in range(1, ws.max_column + 1):
         ws_invalid.cell(1, col).value = ws.cell(1, col).value
-    
+
     # Copy invalid rows
     for idx, row_num in enumerate(invalid_rows, start=2):
         for col in range(1, ws.max_column + 1):
             ws_invalid.cell(idx, col).value = ws.cell(row_num, col).value
-    
+
     # Delete invalid rows (backwards to preserve row numbers)
     for row_num in reversed(invalid_rows):
         ws.delete_rows(row_num)
-    
+
     # Format headers
     ws.cell(1, 1).font = openpyxl.styles.Font(bold=True)
     ws.auto_filter.ref = ws.dimensions
-    
+
     print(f"Extracted {len(invalid_rows)} invalid rows to 'Invalid' sheet")
     return len(invalid_rows)
 
 def assign_staff(ws, date_token: str = None):
     """Assign staff names based on business rules"""
-    
     # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
     for col in range(1, ws.max_column + 1):
@@ -111,7 +112,7 @@ def assign_staff(ws, date_token: str = None):
             cols['payer'] = col
         elif header == "Billing Provider":
             cols['billing_provider'] = col
-    
+
     if not all(k in cols for k in ['group', 'groupfld1', 'service', 'payer', 'billing_provider']):
         raise ValueError("Missing required columns: GROUPFLD2, GROUPFLD1, Service, Payer, or Billing Provider")
     
@@ -136,7 +137,7 @@ def assign_staff(ws, date_token: str = None):
         payer = str(ws.cell(row, cols['payer']).value or "")
         payer_lower = payer.lower()
         billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
-        
+
         staff = None
         
         # Check if service is non-billable for this day using the new helper
@@ -154,14 +155,14 @@ def assign_staff(ws, date_token: str = None):
         # CB: Self Pay
         if not staff and group == "Self Pay":
             staff = "CB"
-        
+
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
             if ("iop" in service_lower or 
                 service_lower.startswith("acupuncture") or 
                 "partial hospitalization" in service_lower):
                 staff = "Rosanna"
-        
+
         # Melissa: (Detox or Residential but NOT Drug Screen) + (Aetna or Humana)
         # CHECK MELISSA BEFORE JASMINE - she's more specific
         if not staff:
@@ -171,65 +172,65 @@ def assign_staff(ws, date_token: str = None):
             
             if has_detox_res and no_drug_screen and has_insurance:
                 staff = "Melissa"
-        
+
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
             if (service_lower.startswith("detox") or 
                 service_lower.startswith("drug screen 13 panel") or 
                 service_lower.startswith("residential")):
                 staff = "Jasmine"
-        
+
         # Rosanna_2: Fill remaining blanks
         if not staff:
             staff = "Rosanna"
-        
+
         ws.cell(row, 1).value = staff
-    
+
     print("Staff assignment complete")
 
 def finalize_workbook(wb):
     """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
     ws = wb.active
-    
+
     # Insert two columns at E
     ws.insert_cols(5, 2)
     ws.cell(1, 5).value = "Status"
     ws.cell(1, 6).value = "Comments"
-    
+
     # Create Sheet2 with validation list
     ws_list = wb.create_sheet("Sheet2")
     ws_list['A1'] = "Billed"
     ws_list['A2'] = "Unable to Bill"
     ws_list['A3'] = "Contractual Adj"
     ws_list['A4'] = "Incomplete Billings"
-    
+
     # Add data validation to Status column
     dv = DataValidation(type="list", formula1="=Sheet2!$A$1:$A$4", allow_blank=True)
     ws.add_data_validation(dv)
-    
+
     last_row = ws.max_row
     dv.add(f'E2:E{last_row}')
-    
+
     # Auto-fit columns
     for col in range(1, ws.max_column + 1):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
 def export_staff_workbooks(wb, wb_path, date_token):
     """Export separate workbooks for Rosanna, Jasmine, CB"""
-    
+
     ws = wb.active
     save_folder = get_save_folder(wb_path, date_token)
-    
+
     for staff_name in ["Rosanna", "Jasmine", "CB"]:
         # Create new workbook
         new_wb = openpyxl.Workbook()
         new_ws = new_wb.active
         new_ws.title = "Sheet1"
-        
+
         # Copy header
         for col in range(1, ws.max_column + 1):
             new_ws.cell(1, col).value = ws.cell(1, col).value
-        
+
         # Copy matching rows
         new_row = 2
         for row in range(2, ws.max_row + 1):
@@ -237,15 +238,15 @@ def export_staff_workbooks(wb, wb_path, date_token):
                 for col in range(1, ws.max_column + 1):
                     new_ws.cell(new_row, col).value = ws.cell(row, col).value
                 new_row += 1
-        
+
         if new_row == 2:  # No rows found
             print(f"No rows for {staff_name}, skipping")
             continue
-        
+
         # Finalize for Rosanna and Jasmine only
         if staff_name in ["Rosanna", "Jasmine"]:
             finalize_workbook(new_wb)
-        
+
         # Save
         save_path = save_folder / f"Unbilled Revenue By Resident and Funding Type {date_token} - {staff_name}.xlsx"
         new_wb.save(save_path)
@@ -253,13 +254,13 @@ def export_staff_workbooks(wb, wb_path, date_token):
 
 def main(workbook_path):
     """Main workflow"""
-    
+
     # Load workbook
     wb = openpyxl.load_workbook(workbook_path)
-    
+
     # Find the data sheet (first sheet or by name pattern)
     ws = wb.active
-    
+
     # Extract date token
     date_token = extract_date_from_filename(Path(workbook_path).name)
     if not date_token:
@@ -269,7 +270,7 @@ def main(workbook_path):
     
     # Step 1: Extract invalid
     step_1_extract_invalid(ws)
-    
+
     # Step 2-6: Assign staff
     assign_staff(ws, date_token)
     
@@ -286,7 +287,7 @@ def main(workbook_path):
     print("\n✓ All done!")
 
 if __name__ == "__main__":
-    # UPDATE THIS LINE with your actual file path
-    workbook_path = r"C:\Users\phogo\OneDrive\Billing App\Unbilled Reports\2026\01 - January 2026\01252026\Unbilled Revenue By Resident and Funding Type 01252026 - Masters.xlsx"
-    
-    main(workbook_path)
+    # Optionally allow running from CLI
+    import sys
+    if len(sys.argv) > 1:
+        main(sys.argv[1])
