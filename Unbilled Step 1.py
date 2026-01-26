@@ -142,15 +142,48 @@ def step_1_extract_invalid(ws):
     print(f"Extracted {len(invalid_rows)} invalid rows to 'Invalid' sheet")
     return len(invalid_rows)
 
-def assign_staff(ws, date_token: str = None):
+def _is_ecare(service_lower: str) -> bool:
+    """Check if service is e-care (handles common variants)"""
+    # Handle common e-care variants: "e-care", "e care", "ecare"
+    return any(variant in service_lower for variant in ["e-care", "e care", "ecare"])
+
+def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     """
-    Assign staff names based on business rules.
+    Determine if a service is non-billable for a given weekday.
+    
+    Weekday rules:
+    - Tuesday (1): all services billed (including e-care)
+    - Monday (0): non-billable: partial hospitalization, residential, detox, e-care
+    - Wednesday-Friday (2,3,4): bill all services except e-care
+    - Saturday-Sunday (5,6): bill all services except e-care
+    
+    Args:
+        service: Service name (case-insensitive)
+        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+    
+    Returns:
+        True if service is non-billable for this weekday
+    """
+    service_lower = service.lower()
+    
+    if weekday == 1:  # Tuesday - bill all services
+        return False
+    elif weekday == 0:  # Monday - multiple non-billable services
+        return (
+            "partial hospitalization" in service_lower or
+            "residential" in service_lower or
+            "detox" in service_lower or
+            _is_ecare(service_lower)
+        )
+    else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
+        return _is_ecare(service_lower)
+
+def assign_staff(ws, date_token: str = None):
+    """Assign staff names based on business rules
     
     Args:
         ws: Worksheet to process
-        date_token: Optional date string in MMDDYYYY format from filename.
-                   If provided, used to determine weekday for non-billable logic.
-                   If not provided or parsing fails, falls back to current date.
+        date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -171,17 +204,22 @@ def assign_staff(ws, date_token: str = None):
     if not all(k in cols for k in ['group', 'groupfld1', 'service', 'payer', 'billing_provider']):
         raise ValueError("Missing required columns: GROUPFLD2, GROUPFLD1, Service, Payer, or Billing Provider")
     
-    # Parse weekday from date_token or fallback to current date
+    # Determine weekday from date_token or fall back to current date
     if date_token:
         try:
-            file_date = datetime.strptime(date_token, '%m%d%Y')
-            day_of_week = file_date.weekday()
-            print(f"Using file date {date_token} (weekday={day_of_week})")
-        except (ValueError, TypeError) as e:
-            print(f"Failed to parse date_token '{date_token}': {e}. Using current date.")
-            day_of_week = datetime.now().weekday()
+            # Parse MMDDYYYY format
+            date_obj = datetime.strptime(date_token, '%m%d%Y')
+            day_of_week = date_obj.weekday()
+            print(f"Using date from filename: {date_token} (weekday={day_of_week})")
+        except ValueError:
+            # Fall back to current date if parsing fails
+            today = datetime.now()
+            day_of_week = today.weekday()
+            print(f"Failed to parse date_token '{date_token}', using current date (weekday={day_of_week})")
     else:
-        day_of_week = datetime.now().weekday()
+        # Fall back to current date if no date_token provided
+        today = datetime.now()
+        day_of_week = today.weekday()
         print(f"No date_token provided, using current date (weekday={day_of_week})")
     
     # Assign staff
@@ -195,7 +233,7 @@ def assign_staff(ws, date_token: str = None):
 
         staff = None
         
-        # Check if service is non-billable for this weekday
+        # Check if service is non-billable for this day using weekday rules
         is_non_billable = is_non_billable_service_for_weekday(service, day_of_week)
         
         # Unable to Bill: O'Flynn + OP Chappaqua or OP NYC
