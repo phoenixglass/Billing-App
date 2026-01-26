@@ -178,9 +178,7 @@ def assign_staff(ws, date_token: str = None):
         group = str(ws.cell(row, cols['group']).value or "").strip()
         groupfld1 = str(ws.cell(row, cols['groupfld1']).value or "").strip()
         service = str(ws.cell(row, cols['service']).value or "")
-        service_lower = service.lower()
         payer = str(ws.cell(row, cols['payer']).value or "")
-        payer_lower = payer.lower()
         billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
         
         staff = None
