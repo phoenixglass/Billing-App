@@ -37,7 +37,7 @@ def check_password():
         # Hash the password for basic security
         entered_hash = hashlib.sha256(st.session_state["password"].encode()).hexdigest()
         # Default password: "billing2026" (hash stored)
-        correct_hash = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+        correct_hash = "e007fbdc563042ac6aa9dcdfc979b2a8233938d600c412c2b2ad00a273ddd0d1"
         
         if entered_hash == correct_hash:
             st.session_state["password_correct"] = True
