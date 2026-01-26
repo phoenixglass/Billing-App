@@ -12,8 +12,6 @@ st.set_page_config(page_title="Unbilled Billing App", layout="wide")
 st.title("Unbilled Billing Processor")
 st.markdown("Upload your billing file to process it automatically")
 
-from billing_rules import parse_weekday_from_token, is_non_billable_service_for_weekday
-
 
 def extract_date_from_filename(filename):
     """Extract MMDDYYYY date from filename"""
