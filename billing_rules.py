@@ -1,63 +1,64 @@
 """
-Billing rules for weekday-based non-billable service logic.
+Helper functions to:
+- parse MMDDYYYY date tokens into weekday
+- determine whether a given service is non-billable for a given weekday
+
+Weekday mapping: 0=Monday, 1=Tuesday, ..., 6=Sunday
+
+Rules implemented:
+- Tuesday (1): everything billed (including e-care).
+- Monday (0): non-billable: partial hospitalization, residential, detox, and e-care.
+- Wednesday-Friday (2,3,4): all services billed except e-care.
+- e-care is billable only on Tuesdays (non-billable on other days).
+- Matches e-care variants: "e-care", "e care", "ecare" (case-insensitive).
 """
+from datetime import datetime
+from typing import Tuple
 
 
-def _is_ecare(service: str) -> bool:
+def parse_weekday_from_token(date_token: str) -> Tuple[int, bool]:
     """
-    Check if a service is e-care (case-insensitive).
-    
-    Args:
-        service: Service name (will be converted to lowercase)
-        
-    Returns:
-        True if the service is e-care in any variant
+    Parse an MMDDYYYY date_token and return (weekday, did_fallback).
+    - weekday: integer 0..6
+    - did_fallback: True if parsing failed and we fell back to today's weekday
     """
-    # Check for common e-care variants (case-insensitive)
-    service_lower = service.lower()
-    ecare_variants = ['e-care', 'e care', 'ecare']
-    return any(variant in service_lower for variant in ecare_variants)
+    if not date_token:
+        return datetime.now().weekday(), True
+    try:
+        dt = datetime.strptime(date_token, "%m%d%Y")
+        return dt.weekday(), False
+    except Exception:
+        return datetime.now().weekday(), True
+
+
+def _is_ecare(service_lower: str) -> bool:
+    """Return True if the service text refers to e-care (many possible variants)."""
+    return any(token in service_lower for token in ("e-care", "e care", "ecare"))
 
 
 def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     """
-    Determine if a service is non-billable based on the weekday.
-    
-    Weekday rules:
-    - Tuesday (weekday == 1): Everything is billed (including e-care)
-    - Monday (weekday == 0): Non-billable: partial hospitalization, residential, detox, and e-care
-    - Wednesday-Friday (2, 3, 4): All services billed except e-care
-    - Saturday-Sunday (5, 6): All services billed except e-care
-    
-    E-care is only billable on Tuesdays (non-billable all other days).
-    
-    Args:
-        service: The service name (case-insensitive matching)
-        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-        
-    Returns:
-        True if the service is non-billable for the given weekday, False otherwise
+    Return True if the given service (string) should be treated as non-billable
+    on the specified weekday.
+
+    - service: original service string (case-insensitive checks will be used)
+    - weekday: 0=Monday .. 6=Sunday
     """
-    service_lower = service.lower()
-    
-    # Tuesday (1): Bill everything - nothing is non-billable
+    s = (service or "").lower().strip()
+
+    # e-care is only billed on Tuesdays
+    if _is_ecare(s):
+        return weekday != 1  # non-billable unless Tuesday
+
+    # Monday: exclude partial hospitalization, residential, detox
+    if weekday == 0:
+        if any(x in s for x in ("partial hospitalization", "residential", "detox")):
+            return True
+        return False
+
+    # Tuesday: everything billable (already covered e-care above)
     if weekday == 1:
         return False
-    
-    # Monday (0): Non-billable for partial hospitalization, residential, detox, and e-care
-    if weekday == 0:
-        if _is_ecare(service_lower):
-            return True
-        if 'partial hospitalization' in service_lower:
-            return True
-        if 'residential' in service_lower:
-            return True
-        if 'detox' in service_lower:
-            return True
-        return False
-    
-    # Wednesday-Sunday (2, 3, 4, 5, 6): Non-billable only for e-care
-    if weekday in [2, 3, 4, 5, 6]:
-        return _is_ecare(service_lower)
-    
+
+    # Wed-Fri and weekends: only e-care is non-billable (handled above)
     return False
