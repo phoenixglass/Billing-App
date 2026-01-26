@@ -18,6 +18,52 @@ def extract_date_from_filename(filename):
         return match.group(1)
     return None
 
+def _is_ecare(service_lower: str) -> bool:
+    """
+    Check if service is e-care (case-insensitive).
+    Handles variants: 'e-care', 'e care', 'ecare'
+    """
+    return any(variant in service_lower for variant in ['e-care', 'e care', 'ecare'])
+
+def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
+    """
+    Determine if a service is non-billable for a given weekday.
+    
+    Weekday rules:
+    - Tuesday (1): Everything billable (including e-care)
+    - Monday (0): Non-billable: partial hospitalization, residential, detox, e-care
+    - Wednesday-Friday (2,3,4): All services billable except e-care
+    - Saturday-Sunday (5,6): e-care non-billable (treat like Wed-Fri)
+    
+    E-care is only billable on Tuesdays.
+    
+    Args:
+        service: Service name (case-insensitive matching)
+        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
+    
+    Returns:
+        True if service is non-billable for the given weekday
+    """
+    service_lower = service.lower()
+    
+    # Tuesday: everything billable
+    if weekday == 1:
+        return False
+    
+    # Monday: non-billable services
+    if weekday == 0:
+        if _is_ecare(service_lower):
+            return True
+        if any(s in service_lower for s in ['partial hospitalization', 'residential', 'detox']):
+            return True
+        return False
+    
+    # Wednesday-Sunday (2,3,4,5,6): e-care non-billable
+    if weekday in [2, 3, 4, 5, 6]:
+        return _is_ecare(service_lower)
+    
+    return False
+
 def get_filename_prefix(filename):
     """Extract the prefix before the date in filename"""
     date_match = re.search(r'(\d{8})', filename)
@@ -76,8 +122,16 @@ def step_1_extract_invalid(ws):
     
     return len(invalid_rows)
 
-def assign_staff(ws):
-    """Assign staff names based on business rules"""
+def assign_staff(ws, date_token: str = None):
+    """
+    Assign staff names based on business rules.
+    
+    Args:
+        ws: Worksheet to process
+        date_token: Optional date string in MMDDYYYY format from filename.
+                   If provided, used to determine weekday for non-billable logic.
+                   If not provided or parsing fails, falls back to current date.
+    """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
@@ -97,33 +151,29 @@ def assign_staff(ws):
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
     
-    # Get today's day of week (0=Monday, 6=Sunday)
-    today = datetime.now()
-    day_of_week = today.weekday()  # 0=Monday, 1=Tuesday, ..., 4=Friday
-    
-    # Define non-billable services by day (case-insensitive matching)
-    non_billable_services = {
-        0: ["detox", "residential", "partial hospitalization", "e-care"],  # Monday
-        1: [],  # Tuesday - bill all
-        2: ["e-care"],  # Wednesday
-        3: ["e-care"],  # Thursday
-        4: ["e-care"],  # Friday
-        5: ["e-care"],  # Saturday
-        6: ["e-care"],  # Sunday
-    }
-    
-    non_billable = non_billable_services.get(day_of_week, [])
+    # Parse weekday from date_token or fallback to current date
+    if date_token:
+        try:
+            file_date = datetime.strptime(date_token, '%m%d%Y')
+            day_of_week = file_date.weekday()
+            print(f"Using file date {date_token} (weekday={day_of_week})")
+        except (ValueError, TypeError) as e:
+            print(f"Failed to parse date_token '{date_token}': {e}. Using current date.")
+            day_of_week = datetime.now().weekday()
+    else:
+        day_of_week = datetime.now().weekday()
+        print(f"No date_token provided, using current date (weekday={day_of_week})")
     
     # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
-        service = str(ws.cell(row, cols['service']).value or "").lower()
+        service = str(ws.cell(row, cols['service']).value or "").strip()
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
         
         staff = None
         
-        # Check if service is non-billable for this day (case-insensitive)
-        is_non_billable = any(non_bill_service in service for non_bill_service in non_billable)
+        # Check if service is non-billable for this weekday
+        is_non_billable = is_non_billable_service_for_weekday(service, day_of_week)
         
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
@@ -140,7 +190,8 @@ def assign_staff(ws):
         
         # Melissa: (Detox or Residential) + (Aetna or Humana)
         if not staff:
-            has_detox_res = ("detox" in service or "residential" in service)
+            service_lower = service.lower()
+            has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             has_insurance = "aetna" in payer or "humana" in payer
             
             if has_detox_res and has_insurance:
@@ -152,16 +203,18 @@ def assign_staff(ws):
         
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
-            if ("iop" in service or 
-                service.startswith("acupuncture") or 
-                "partial hospitalization" in service):
+            service_lower = service.lower()
+            if ("iop" in service_lower or 
+                service_lower.startswith("acupuncture") or 
+                "partial hospitalization" in service_lower):
                 staff = "Rosanna"
         
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            if ("detox" in service or 
-                service.startswith("drug screen 13 panel") or 
-                service.startswith("residential")):
+            service_lower = service.lower()
+            if ("detox" in service_lower or 
+                service_lower.startswith("drug screen 13 panel") or 
+                service_lower.startswith("residential")):
                 staff = "Jasmine"
         
         # Rosanna_2: Fill remaining blanks
@@ -222,7 +275,7 @@ def process_workbook(uploaded_file):
     filename_prefix = get_filename_prefix(uploaded_file.name)
     
     invalid_count = step_1_extract_invalid(ws)
-    assign_staff(ws)
+    assign_staff(ws, date_token)
     
     output_files = {}
     
