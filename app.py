@@ -411,35 +411,11 @@ def secure_cleanup(file_path):
 
 def process_workbook(uploaded_file):
     """Process the uploaded workbook"""
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-        tmp.write(uploaded_file.getbuffer())
-        tmp_path = tmp.name
-    
-    wb = openpyxl.load_workbook(tmp_path)
-    ws = wb.active
-    
-    date_token = extract_date_from_filename(uploaded_file.name)
-    if not date_token:
-        raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
-    
-    filename_prefix = get_filename_prefix(uploaded_file.name)
-    
-    invalid_count = step_1_extract_invalid(ws)
-    assign_staff(ws, date_token)
-    
-    output_files = {}
-    
-    for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
-        new_wb = openpyxl.Workbook()
-        new_ws = new_wb.active
-        new_ws.title = "Sheet1"
-        
+    tmp_path = None
+    try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
             tmp.write(uploaded_file.getbuffer())
             tmp_path = tmp.name
-        
-        logger.info(f"Processing file: {uploaded_file.name} (temp: {tmp_path})")
         
         wb = openpyxl.load_workbook(tmp_path)
         ws = wb.active
@@ -460,38 +436,63 @@ def process_workbook(uploaded_file):
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
             
-            for col in range(1, ws.max_column + 1):
-                new_ws.cell(1, col).value = ws.cell(1, col).value
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                tmp.write(uploaded_file.getbuffer())
+                tmp_path = tmp.name
             
-            new_row = 2
-            for row in range(2, ws.max_row + 1):
-                if ws.cell(row, 1).value == staff_name:
-                    for col in range(1, ws.max_column + 1):
-                        new_ws.cell(new_row, col).value = ws.cell(row, col).value
-                    new_row += 1
+            logger.info(f"Processing file: {uploaded_file.name} (temp: {tmp_path})")
             
-            if new_row == 2:
-                continue
+            wb = openpyxl.load_workbook(tmp_path)
+            ws = wb.active
             
-            if staff_name in ["Rosanna", "Jasmine"]:
-                finalize_workbook(new_wb)
+            date_token = extract_date_from_filename(uploaded_file.name)
+            if not date_token:
+                raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
             
-            output = io.BytesIO()
-            new_wb.save(output)
-            output.seek(0)
-            output_filename = f"{filename_prefix}{staff_name}.xlsx"
-            output_files[output_filename] = output
-        
-        main_output = io.BytesIO()
-        wb.save(main_output)
-        main_output.seek(0)
-        main_filename = f"{filename_prefix}Masters.xlsx"
-        output_files[main_filename] = main_output
-        
-        logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
-        
-        return output_files, invalid_count, date_token
-        
+            filename_prefix = get_filename_prefix(uploaded_file.name)
+            
+            invalid_count = step_1_extract_invalid(ws)
+            assign_staff(ws, date_token)
+            
+            output_files = {}
+            
+            for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
+                new_wb = openpyxl.Workbook()
+                new_ws = new_wb.active
+                new_ws.title = "Sheet1"
+                
+                for col in range(1, ws.max_column + 1):
+                    new_ws.cell(1, col).value = ws.cell(1, col).value
+                
+                new_row = 2
+                for row in range(2, ws.max_row + 1):
+                    if ws.cell(row, 1).value == staff_name:
+                        for col in range(1, ws.max_column + 1):
+                            new_ws.cell(new_row, col).value = ws.cell(row, col).value
+                        new_row += 1
+                
+                if new_row == 2:
+                    continue
+                
+                if staff_name in ["Rosanna", "Jasmine"]:
+                    finalize_workbook(new_wb)
+                
+                output = io.BytesIO()
+                new_wb.save(output)
+                output.seek(0)
+                output_filename = f"{filename_prefix}{staff_name}.xlsx"
+                output_files[output_filename] = output
+            
+            main_output = io.BytesIO()
+            wb.save(main_output)
+            main_output.seek(0)
+            main_filename = f"{filename_prefix}Masters.xlsx"
+            output_files[main_filename] = main_output
+            
+            logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
+            
+            return output_files, invalid_count, date_token
+            
     finally:
         # Always cleanup temp file securely
         if tmp_path:
@@ -509,11 +510,11 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token, date_fallback = process_workbook(uploaded_file)
+        output_files, invalid_count, date_token = process_workbook(uploaded_file)
         
         # Show warning if date fallback occurred
-        if date_fallback:
-            st.warning("⚠️ Filename did not contain a valid MMDDYYYY date; using today's date for weekday rules")
+        # if date_fallback:
+        #     st.warning("⚠️ Filename did not contain a valid MMDDYYYY date; using today's date for weekday rules")
         
         st.success("✓ Processing complete!")
         

@@ -35,3 +35,6 @@ ENV/
 # Temporary files
 /tmp/
 *.tmp
+
+# Audit logs
+audit_logs/
