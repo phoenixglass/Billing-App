@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 import io
 import tempfile
+from billing_rules import is_non_billable_service_for_weekday
 
 st.set_page_config(page_title="Unbilled Billing App", layout="wide")
 st.title("Unbilled Billing Processor")
@@ -76,7 +77,7 @@ def step_1_extract_invalid(ws):
     
     return len(invalid_rows)
 
-def assign_staff(ws):
+def assign_staff(ws, date_token: str = None):
     """Assign staff names based on business rules"""
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -97,33 +98,28 @@ def assign_staff(ws):
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
     
-    # Get today's day of week (0=Monday, 6=Sunday)
-    today = datetime.now()
-    day_of_week = today.weekday()  # 0=Monday, 1=Tuesday, ..., 4=Friday
-    
-    # Define non-billable services by day (case-insensitive matching)
-    non_billable_services = {
-        0: ["detox", "residential", "partial hospitalization", "e-care"],  # Monday
-        1: [],  # Tuesday - bill all
-        2: ["e-care"],  # Wednesday
-        3: ["e-care"],  # Thursday
-        4: ["e-care"],  # Friday
-        5: ["e-care"],  # Saturday
-        6: ["e-care"],  # Sunday
-    }
-    
-    non_billable = non_billable_services.get(day_of_week, [])
+    # Compute weekday from date_token (MMDDYYYY) or fall back to today
+    if date_token:
+        try:
+            file_date = datetime.strptime(date_token, '%m%d%Y')
+            weekday = file_date.weekday()
+        except ValueError:
+            print(f"Warning: Could not parse date_token '{date_token}', using today's date")
+            weekday = datetime.now().weekday()
+    else:
+        print("Warning: No date_token provided, using today's date for weekday rules")
+        weekday = datetime.now().weekday()
     
     # Assign staff
     for row in range(2, ws.max_row + 1):
         group = str(ws.cell(row, cols['group']).value or "").strip()
-        service = str(ws.cell(row, cols['service']).value or "").lower()
+        service = str(ws.cell(row, cols['service']).value or "")
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
         
         staff = None
         
-        # Check if service is non-billable for this day (case-insensitive)
-        is_non_billable = any(non_bill_service in service for non_bill_service in non_billable)
+        # Check if service is non-billable for this day using the new helper
+        is_non_billable = is_non_billable_service_for_weekday(service, weekday)
         
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
@@ -140,7 +136,8 @@ def assign_staff(ws):
         
         # Melissa: (Detox or Residential) + (Aetna or Humana)
         if not staff:
-            has_detox_res = ("detox" in service or "residential" in service)
+            service_lower = service.lower()
+            has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             has_insurance = "aetna" in payer or "humana" in payer
             
             if has_detox_res and has_insurance:
@@ -152,16 +149,18 @@ def assign_staff(ws):
         
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
         if not staff and group == "Insurance":
-            if ("iop" in service or 
-                service.startswith("acupuncture") or 
-                "partial hospitalization" in service):
+            service_lower = service.lower()
+            if ("iop" in service_lower or 
+                service_lower.startswith("acupuncture") or 
+                "partial hospitalization" in service_lower):
                 staff = "Rosanna"
         
         # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            if ("detox" in service or 
-                service.startswith("drug screen 13 panel") or 
-                service.startswith("residential")):
+            service_lower = service.lower()
+            if ("detox" in service_lower or 
+                service_lower.startswith("drug screen 13 panel") or 
+                service_lower.startswith("residential")):
                 staff = "Jasmine"
         
         # Rosanna_2: Fill remaining blanks
@@ -216,13 +215,15 @@ def process_workbook(uploaded_file):
     ws = wb.active
     
     date_token = extract_date_from_filename(uploaded_file.name)
+    date_fallback = False
     if not date_token:
-        raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
+        # No valid date found, will use today's date in assign_staff
+        date_fallback = True
     
     filename_prefix = get_filename_prefix(uploaded_file.name)
     
     invalid_count = step_1_extract_invalid(ws)
-    assign_staff(ws)
+    assign_staff(ws, date_token)
     
     output_files = {}
     
@@ -259,7 +260,7 @@ def process_workbook(uploaded_file):
     main_filename = f"{filename_prefix}Masters.xlsx"
     output_files[main_filename] = main_output
     
-    return output_files, invalid_count, date_token
+    return output_files, invalid_count, date_token, date_fallback
 
 # UI
 st.markdown("### Upload your billing file")
@@ -271,13 +272,17 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token = process_workbook(uploaded_file)
+        output_files, invalid_count, date_token, date_fallback = process_workbook(uploaded_file)
+        
+        # Show warning if date fallback occurred
+        if date_fallback:
+            st.warning("⚠️ Filename did not contain a valid MMDDYYYY date; using today's date for weekday rules")
         
         st.success("✓ Processing complete!")
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Date Extracted", date_token)
+            st.metric("Date Extracted", date_token if date_token else "Today's date")
         with col2:
             st.metric("Invalid Rows", invalid_count or 0)
         with col3:
