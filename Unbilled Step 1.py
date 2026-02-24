@@ -266,10 +266,9 @@ def assign_staff(ws, date_token: str = None):
             if has_detox_res and no_drug_screen and has_insurance:
                 staff = "Melissa"
 
-        # Jasmine: (Insurance or blank) + (Detox or Drug Screen 13 Panel or Residential)
+        # Jasmine: (Insurance or blank) + (Detox or Residential)
         if not staff and (group == "Insurance" or group == ""):
-            if (service_lower.startswith("detox") or 
-                service_lower.startswith("drug screen 13 panel") or 
+            if (service_lower.startswith("detox") or
                 service_lower.startswith("residential")):
                 staff = "Jasmine"
 
