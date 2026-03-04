@@ -295,9 +295,11 @@ def finalize_workbook(wb):
     ws_list['A2'] = "Unable to Bill"
     ws_list['A3'] = "Contractual Adj"
     ws_list['A4'] = "Incomplete Billings"
+    ws_list['A5'] = "Utox Batch"
+    ws_list['A6'] = "Inclusive Services"
 
     # Add data validation to Status column
-    dv = DataValidation(type="list", formula1="=Sheet2!$A$1:$A$4", allow_blank=True)
+    dv = DataValidation(type="list", formula1="=Sheet2!$A$1:$A$6", allow_blank=True)
     ws.add_data_validation(dv)
 
     last_row = ws.max_row
