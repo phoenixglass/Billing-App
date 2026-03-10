@@ -410,14 +410,7 @@ def secure_cleanup(file_path):
     except Exception as e:
         logger.error(f"Error during secure cleanup: {e}")
 
-DRUG_SCREEN_KEYWORDS = ["drug screen", "utox", "urine tox", "drug test", "uds"]
-
-def is_drug_screen(service: str) -> bool:
-    """Return True if the service is a drug screen."""
-    service_lower = service.lower()
-    return any(kw in service_lower for kw in DRUG_SCREEN_KEYWORDS)
-
-def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
+def process_workbook(uploaded_file):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -463,30 +456,18 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
             assign_staff(ws, date_token)
             
             output_files = {}
-
-            # Find the Service column index for drug screen filtering
-            service_col = None
-            for col in range(1, ws.max_column + 1):
-                if ws.cell(1, col).value == "Service":
-                    service_col = col
-                    break
-
+            
             for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
                 new_wb = openpyxl.Workbook()
                 new_ws = new_wb.active
                 new_ws.title = "Sheet1"
-
+                
                 for col in range(1, ws.max_column + 1):
                     new_ws.cell(1, col).value = ws.cell(1, col).value
-
+                
                 new_row = 2
                 for row in range(2, ws.max_row + 1):
                     if ws.cell(row, 1).value == staff_name:
-                        if (exclude_drug_screens and staff_name == "Rosanna" and
-                                service_col is not None):
-                            service_val = str(ws.cell(row, service_col).value or "")
-                            if is_drug_screen(service_val):
-                                continue
                         for col in range(1, ws.max_column + 1):
                             new_ws.cell(new_row, col).value = ws.cell(row, col).value
                         new_row += 1
@@ -527,16 +508,10 @@ uploaded_file = st.file_uploader(
     type="xlsx"
 )
 
-exclude_drug_screens = st.checkbox(
-    "Exclude drug screens from Rosanna's report",
-    value=False,
-    help="When checked, rows with drug screen services will not be included in Rosanna's output file."
-)
-
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token = process_workbook(uploaded_file, exclude_drug_screens=exclude_drug_screens)
+        output_files, invalid_count, date_token = process_workbook(uploaded_file)
         
         # Show warning if date fallback occurred
         # if date_fallback:
