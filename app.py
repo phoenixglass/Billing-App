@@ -340,7 +340,7 @@ def assign_staff(ws, date_token: str = None):
     print("Staff assignment complete")
 
 
-def finalize_workbook(wb):
+def finalize_workbook(wb, exclude_drug_screens: bool = False):
     """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
     ws = wb.active
 
@@ -356,16 +356,22 @@ def finalize_workbook(wb):
     ws.cell(1, 6).font = openpyxl.styles.Font(bold=True)
 
     # Create Sheet2 with validation list
+    # When drug screens are excluded, omit "Utox Batch" from the dropdown
     ws_list = wb.create_sheet("Sheet2")
     ws_list['A1'] = "Billed"
     ws_list['A2'] = "Unable to Bill"
     ws_list['A3'] = "Contractual Adj"
     ws_list['A4'] = "Incomplete Billings"
-    ws_list['A5'] = "Utox Batch"
-    ws_list['A6'] = "Inclusive Services"
+    if exclude_drug_screens:
+        ws_list['A5'] = "Inclusive Services"
+        list_range = "=Sheet2!$A$1:$A$5"
+    else:
+        ws_list['A5'] = "Utox Batch"
+        ws_list['A6'] = "Inclusive Services"
+        list_range = "=Sheet2!$A$1:$A$6"
 
     # Add data validation to Status column
-    dv = DataValidation(type="list", formula1="=Sheet2!$A$1:$A$6", allow_blank=True)
+    dv = DataValidation(type="list", formula1=list_range, allow_blank=True)
     ws.add_data_validation(dv)
 
     last_row = ws.max_row
@@ -396,6 +402,13 @@ def validate_uploaded_file(uploaded_file):
     logger.info(f"User '{st.session_state.get('username', 'unknown')}' uploaded file: {uploaded_file.name} ({file_size} bytes)")
     return True
 
+DRUG_SCREEN_KEYWORDS = ["drug screen", "utox", "urine tox", "drug test", "uds"]
+
+def is_drug_screen(service: str) -> bool:
+    """Return True if the service is a drug screen."""
+    service_lower = service.lower()
+    return any(kw in service_lower for kw in DRUG_SCREEN_KEYWORDS)
+
 def secure_cleanup(file_path):
     """Securely delete temporary file."""
     try:
@@ -410,7 +423,7 @@ def secure_cleanup(file_path):
     except Exception as e:
         logger.error(f"Error during secure cleanup: {e}")
 
-def process_workbook(uploaded_file):
+def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -456,27 +469,39 @@ def process_workbook(uploaded_file):
             assign_staff(ws, date_token)
             
             output_files = {}
-            
+
+            # Find the Service column index for drug screen filtering
+            service_col = None
+            for col in range(1, ws.max_column + 1):
+                if ws.cell(1, col).value == "Service":
+                    service_col = col
+                    break
+
             for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
                 new_wb = openpyxl.Workbook()
                 new_ws = new_wb.active
                 new_ws.title = "Sheet1"
-                
+
                 for col in range(1, ws.max_column + 1):
                     new_ws.cell(1, col).value = ws.cell(1, col).value
-                
+
                 new_row = 2
                 for row in range(2, ws.max_row + 1):
                     if ws.cell(row, 1).value == staff_name:
+                        if (exclude_drug_screens and staff_name == "Rosanna" and
+                                service_col is not None):
+                            service_val = str(ws.cell(row, service_col).value or "")
+                            if is_drug_screen(service_val):
+                                continue
                         for col in range(1, ws.max_column + 1):
                             new_ws.cell(new_row, col).value = ws.cell(row, col).value
                         new_row += 1
-                
+
                 if new_row == 2:
                     continue
-                
+
                 if staff_name in ["Rosanna", "Jasmine"]:
-                    finalize_workbook(new_wb)
+                    finalize_workbook(new_wb, exclude_drug_screens=(exclude_drug_screens and staff_name == "Rosanna"))
                 
                 output = io.BytesIO()
                 new_wb.save(output)
@@ -508,10 +533,16 @@ uploaded_file = st.file_uploader(
     type="xlsx"
 )
 
+exclude_drug_screens = st.checkbox(
+    "Exclude drug screens from Rosanna's report",
+    value=False,
+    help="When checked, rows with drug screen services (drug screen, utox, urine tox, drug test, uds) will not be included in Rosanna's output file, and 'Utox Batch' will be removed from the Status dropdown."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token = process_workbook(uploaded_file)
+        output_files, invalid_count, date_token = process_workbook(uploaded_file, exclude_drug_screens=exclude_drug_screens)
         
         # Show warning if date fallback occurred
         # if date_fallback:
