@@ -61,6 +61,10 @@ def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     
     return False
 
+def is_wm_program_level(cell_value) -> bool:
+    """Return True if the Program Level cell contains 'WM'."""
+    return "WM" in str(cell_value or "").upper()
+
 def get_save_folder(workbook_path, date_token):
     """Build save path: ...\\Unbilled Reports\\YYYY\\MM - Month YYYY\\MMDDYYYY"""
     wb_path = Path(workbook_path)
@@ -310,12 +314,32 @@ def finalize_workbook(wb):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
 def export_staff_workbooks(wb, wb_path, date_token):
-    """Export separate workbooks for Rosanna, Jasmine, CB"""
+    """Export separate workbooks for Rosanna, Jasmine, CB, Melissa, Unable to Bill"""
 
     ws = wb.active
     save_folder = get_save_folder(wb_path, date_token)
 
-    for staff_name in ["Rosanna", "Jasmine", "CB"]:
+    # Find Program Level column for WM filtering
+    program_level_col = None
+    for col in range(1, ws.max_column + 1):
+        if ws.cell(1, col).value == "Program Level":
+            program_level_col = col
+            break
+
+    # Count and warn about WM rows
+    wm_count = 0
+    if program_level_col is not None:
+        for row in range(2, ws.max_row + 1):
+            if is_wm_program_level(ws.cell(row, program_level_col).value):
+                wm_count += 1
+    if wm_count > 0:
+        print(
+            f"WARNING: {wm_count} row(s) with 'WM' in the Program Level column were found. "
+            "These rows are only included in Masters and Melissa's report. "
+            "Only Melissa is authorized to bill WM."
+        )
+
+    for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
         # Create new workbook
         new_wb = openpyxl.Workbook()
         new_ws = new_wb.active
@@ -329,6 +353,12 @@ def export_staff_workbooks(wb, wb_path, date_token):
         new_row = 2
         for row in range(2, ws.max_row + 1):
             if ws.cell(row, 1).value == staff_name:
+                # Skip WM program level rows for all staff except Melissa
+                # (Masters retains all rows; only Melissa bills WM)
+                if (staff_name != "Melissa" and
+                        program_level_col is not None and
+                        is_wm_program_level(ws.cell(row, program_level_col).value)):
+                    continue
                 for col in range(1, ws.max_column + 1):
                     new_ws.cell(new_row, col).value = ws.cell(row, col).value
                 new_row += 1

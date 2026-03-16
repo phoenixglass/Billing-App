@@ -409,6 +409,10 @@ def is_drug_screen(service: str) -> bool:
     service_lower = service.lower()
     return any(kw in service_lower for kw in DRUG_SCREEN_KEYWORDS)
 
+def is_wm_program_level(cell_value) -> bool:
+    """Return True if the Program Level cell contains 'WM'."""
+    return "WM" in str(cell_value or "").upper()
+
 def secure_cleanup(file_path):
     """Securely delete temporary file."""
     try:
@@ -470,12 +474,22 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
             
             output_files = {}
 
-            # Find the Service column index for drug screen filtering
+            # Find the Service and Program Level column indices
             service_col = None
+            program_level_col = None
             for col in range(1, ws.max_column + 1):
-                if ws.cell(1, col).value == "Service":
+                header = ws.cell(1, col).value
+                if header == "Service":
                     service_col = col
-                    break
+                elif header == "Program Level":
+                    program_level_col = col
+
+            # Count WM rows for alert
+            wm_count = 0
+            if program_level_col is not None:
+                for row in range(2, ws.max_row + 1):
+                    if is_wm_program_level(ws.cell(row, program_level_col).value):
+                        wm_count += 1
 
             for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
                 new_wb = openpyxl.Workbook()
@@ -493,6 +507,12 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
                             service_val = str(ws.cell(row, service_col).value or "")
                             if is_drug_screen(service_val):
                                 continue
+                        # Skip WM program level rows for all staff except Melissa
+                        # (Masters retains all rows; only Melissa bills WM)
+                        if (staff_name != "Melissa" and
+                                program_level_col is not None and
+                                is_wm_program_level(ws.cell(row, program_level_col).value)):
+                            continue
                         for col in range(1, ws.max_column + 1):
                             new_ws.cell(new_row, col).value = ws.cell(row, col).value
                         new_row += 1
@@ -516,8 +536,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
             output_files[main_filename] = main_output
             
             logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
-            
-            return output_files, invalid_count, date_token
+
+            return output_files, invalid_count, date_token, wm_count
             
     finally:
         # Always cleanup temp file securely
@@ -542,12 +562,15 @@ exclude_drug_screens = st.checkbox(
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token = process_workbook(uploaded_file, exclude_drug_screens=exclude_drug_screens)
-        
-        # Show warning if date fallback occurred
-        # if date_fallback:
-        #     st.warning("⚠️ Filename did not contain a valid MMDDYYYY date; using today's date for weekday rules")
-        
+        output_files, invalid_count, date_token, wm_count = process_workbook(uploaded_file, exclude_drug_screens=exclude_drug_screens)
+
+        if wm_count > 0:
+            st.warning(
+                f"⚠️ Alert: {wm_count} row(s) with 'WM' in the Program Level column were found. "
+                "These rows are only included in Masters and Melissa's report. "
+                "Only Melissa is authorized to bill WM."
+            )
+
         st.success("✓ Processing complete!")
         
         col1, col2, col3 = st.columns(3)
