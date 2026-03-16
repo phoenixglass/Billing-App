@@ -204,6 +204,8 @@ def assign_staff(ws, date_token: str = None):
             cols['payer'] = col
         elif header == "Billing Provider":
             cols['billing_provider'] = col
+        elif header == "Program Level":
+            cols['program_level'] = col
 
     if not all(k in cols for k in ['group', 'groupfld1', 'service', 'payer', 'billing_provider']):
         raise ValueError("Missing required columns: GROUPFLD2, GROUPFLD1, Service, Payer, or Billing Provider")
@@ -236,10 +238,19 @@ def assign_staff(ws, date_token: str = None):
         billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
 
         staff = None
-        
+
+        # WM Program Level: always assigned to Melissa
+        if 'program_level' in cols:
+            if is_wm_program_level(ws.cell(row, cols['program_level']).value):
+                staff = "Melissa"
+
+        if staff:
+            ws.cell(row, 1).value = staff
+            continue
+
         # Check if service is non-billable for this day using weekday rules
         is_non_billable = is_non_billable_service_for_weekday(service, day_of_week)
-        
+
         # Unable to Bill: O'Flynn + OP Chappaqua or OP NYC
         if billing_provider == "O'Flynn, Karen":
             if groupfld1 == "OP Chappaqua" or groupfld1 == "OP NYC":
