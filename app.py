@@ -237,12 +237,13 @@ def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
         return _is_ecare(service_lower)
 
-def assign_staff(ws, date_token: str = None):
+def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False):
     """Assign staff names based on business rules
-    
+
     Args:
         ws: Worksheet to process
         date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
+        give_utox_to_jasmine: If True, drug screen (utox) rows are assigned to Jasmine.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -342,6 +343,10 @@ def assign_staff(ws, date_token: str = None):
                 service_lower.startswith("residential")):
                 staff = "Jasmine"
 
+        # Utox to Jasmine: drug screen rows go to Jasmine when checkbox is enabled
+        if not staff and give_utox_to_jasmine and is_drug_screen(service):
+            staff = "Jasmine"
+
         # Rosanna_2: Fill remaining blanks
         if not staff:
             staff = "Rosanna"
@@ -438,7 +443,8 @@ def secure_cleanup(file_path):
     except Exception as e:
         logger.error(f"Error during secure cleanup: {e}")
 
-def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
+def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
+                     exclude_optum: bool = False, give_utox_to_jasmine: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -481,19 +487,22 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
             filename_prefix = get_filename_prefix(uploaded_file.name)
             
             invalid_count = step_1_extract_invalid(ws)
-            assign_staff(ws, date_token)
-            
+            assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine)
+
             output_files = {}
 
-            # Find the Service and Program Level column indices
+            # Find the Service, Program Level, and Payer column indices
             service_col = None
             program_level_col = None
+            payer_col = None
             for col in range(1, ws.max_column + 1):
                 header = ws.cell(1, col).value
                 if header == "Service":
                     service_col = col
                 elif header == "Program Level":
                     program_level_col = col
+                elif header == "Payer":
+                    payer_col = col
 
             # Count WM rows for alert
             wm_count = 0
@@ -513,6 +522,13 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False):
                 new_row = 2
                 for row in range(2, ws.max_row + 1):
                     if ws.cell(row, 1).value == staff_name:
+                        # Exclude Optum utox rows from all individual workbooks
+                        if (exclude_optum and service_col is not None and
+                                payer_col is not None):
+                            service_val = str(ws.cell(row, service_col).value or "")
+                            payer_val = str(ws.cell(row, payer_col).value or "").lower()
+                            if is_drug_screen(service_val) and "optum" in payer_val:
+                                continue
                         if (exclude_drug_screens and staff_name == "Rosanna" and
                                 service_col is not None):
                             service_val = str(ws.cell(row, service_col).value or "")
@@ -570,10 +586,27 @@ exclude_drug_screens = st.checkbox(
     help="When checked, rows with drug screen services (drug screen, utox, urine tox, drug test, uds) will not be included in Rosanna's output file, and 'Utox Batch' will be removed from the Status dropdown."
 )
 
+exclude_optum = st.checkbox(
+    "Exclude Optum insurance",
+    value=False,
+    help="When checked, utox (drug screen) rows with Optum as the payer will be excluded from all individual staff workbooks."
+)
+
+give_utox_to_jasmine = st.checkbox(
+    "Give utox to Jasmine",
+    value=False,
+    help="When checked, utox (drug screen) rows will be assigned to Jasmine in the master spreadsheet and included in Jasmine's workbook."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token, wm_count = process_workbook(uploaded_file, exclude_drug_screens=exclude_drug_screens)
+        output_files, invalid_count, date_token, wm_count = process_workbook(
+            uploaded_file,
+            exclude_drug_screens=exclude_drug_screens,
+            exclude_optum=exclude_optum,
+            give_utox_to_jasmine=give_utox_to_jasmine,
+        )
 
         if wm_count > 0:
             st.warning(
