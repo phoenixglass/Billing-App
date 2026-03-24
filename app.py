@@ -356,8 +356,15 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False)
     print("Staff assignment complete")
 
 
-def finalize_workbook(wb, exclude_drug_screens: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
+def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_screen_statuses: bool = True):
+    """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
+
+    Args:
+        wb: Workbook to finalize.
+        exclude_drug_screens: When True, omit 'Utox Batch' from dropdown (Rosanna only).
+        include_drug_screen_statuses: When False, omit both 'Utox Batch' and 'Inclusive
+            Services' from the dropdown. Used for Jasmine when give_utox_to_jasmine is False.
+    """
     ws = wb.active
 
     # Bold header row
@@ -372,16 +379,20 @@ def finalize_workbook(wb, exclude_drug_screens: bool = False):
     ws.cell(1, 6).font = openpyxl.styles.Font(bold=True)
 
     # Create Sheet2 with validation list
-    # When drug screens are excluded, omit "Utox Batch" from the dropdown
     ws_list = wb.create_sheet("Sheet2")
     ws_list['A1'] = "Billed"
     ws_list['A2'] = "Unable to Bill"
     ws_list['A3'] = "Contractual Adj"
     ws_list['A4'] = "Incomplete Billings"
-    if exclude_drug_screens:
+    if not include_drug_screen_statuses:
+        # Jasmine without utox: no drug-screen-related status items
+        list_range = "=Sheet2!$A$1:$A$4"
+    elif exclude_drug_screens:
+        # Rosanna with drug screens excluded: keep Inclusive Services but drop Utox Batch
         ws_list['A5'] = "Inclusive Services"
         list_range = "=Sheet2!$A$1:$A$5"
     else:
+        # Rosanna (default) or Jasmine with utox: full dropdown
         ws_list['A5'] = "Utox Batch"
         ws_list['A6'] = "Inclusive Services"
         list_range = "=Sheet2!$A$1:$A$6"
@@ -451,121 +462,102 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
             tmp.write(uploaded_file.getbuffer())
             tmp_path = tmp.name
-        
+
+        logger.info(f"Processing file: {uploaded_file.name} (temp: {tmp_path})")
+
         wb = openpyxl.load_workbook(tmp_path)
         ws = wb.active
-        
+
         date_token = extract_date_from_filename(uploaded_file.name)
         if not date_token:
             raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
-        
+
         filename_prefix = get_filename_prefix(uploaded_file.name)
-        
+
         invalid_count = step_1_extract_invalid(ws)
-        assign_staff(ws, date_token)
-        
+        assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine)
+
         output_files = {}
-        
+
+        # Find the Service, Program Level, and Payer column indices
+        service_col = None
+        program_level_col = None
+        payer_col = None
+        for col in range(1, ws.max_column + 1):
+            header = ws.cell(1, col).value
+            if header == "Service":
+                service_col = col
+            elif header == "Program Level":
+                program_level_col = col
+            elif header == "Payer":
+                payer_col = col
+
+        # Count WM rows for alert
+        wm_count = 0
+        if program_level_col is not None:
+            for row in range(2, ws.max_row + 1):
+                if is_wm_program_level(ws.cell(row, program_level_col).value):
+                    wm_count += 1
+
         for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-                tmp.write(uploaded_file.getbuffer())
-                tmp_path = tmp.name
-            
-            logger.info(f"Processing file: {uploaded_file.name} (temp: {tmp_path})")
-            
-            wb = openpyxl.load_workbook(tmp_path)
-            ws = wb.active
-            
-            date_token = extract_date_from_filename(uploaded_file.name)
-            if not date_token:
-                raise ValueError("Filename must contain 8 digits (MMDDYYYY)")
-            
-            filename_prefix = get_filename_prefix(uploaded_file.name)
-            
-            invalid_count = step_1_extract_invalid(ws)
-            assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine)
 
-            output_files = {}
-
-            # Find the Service, Program Level, and Payer column indices
-            service_col = None
-            program_level_col = None
-            payer_col = None
             for col in range(1, ws.max_column + 1):
-                header = ws.cell(1, col).value
-                if header == "Service":
-                    service_col = col
-                elif header == "Program Level":
-                    program_level_col = col
-                elif header == "Payer":
-                    payer_col = col
+                new_ws.cell(1, col).value = ws.cell(1, col).value
 
-            # Count WM rows for alert
-            wm_count = 0
-            if program_level_col is not None:
-                for row in range(2, ws.max_row + 1):
-                    if is_wm_program_level(ws.cell(row, program_level_col).value):
-                        wm_count += 1
-
-            for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
-                new_wb = openpyxl.Workbook()
-                new_ws = new_wb.active
-                new_ws.title = "Sheet1"
-
-                for col in range(1, ws.max_column + 1):
-                    new_ws.cell(1, col).value = ws.cell(1, col).value
-
-                new_row = 2
-                for row in range(2, ws.max_row + 1):
-                    if ws.cell(row, 1).value == staff_name:
-                        # Exclude Optum utox rows from all individual workbooks
-                        if (exclude_optum and service_col is not None and
-                                payer_col is not None):
-                            service_val = str(ws.cell(row, service_col).value or "")
-                            payer_val = str(ws.cell(row, payer_col).value or "").lower()
-                            if is_drug_screen(service_val) and "optum" in payer_val:
-                                continue
-                        if (exclude_drug_screens and staff_name == "Rosanna" and
-                                service_col is not None):
-                            service_val = str(ws.cell(row, service_col).value or "")
-                            if is_drug_screen(service_val):
-                                continue
-                        # Skip WM program level rows for all staff except Melissa
-                        # (Masters retains all rows; only Melissa bills WM)
-                        if (staff_name != "Melissa" and
-                                program_level_col is not None and
-                                is_wm_program_level(ws.cell(row, program_level_col).value)):
+            new_row = 2
+            for row in range(2, ws.max_row + 1):
+                if ws.cell(row, 1).value == staff_name:
+                    # Exclude Optum utox rows from all individual workbooks
+                    if (exclude_optum and service_col is not None and
+                            payer_col is not None):
+                        service_val = str(ws.cell(row, service_col).value or "")
+                        payer_val = str(ws.cell(row, payer_col).value or "").lower()
+                        if is_drug_screen(service_val) and "optum" in payer_val:
                             continue
-                        for col in range(1, ws.max_column + 1):
-                            new_ws.cell(new_row, col).value = ws.cell(row, col).value
-                        new_row += 1
+                    if (exclude_drug_screens and staff_name == "Rosanna" and
+                            service_col is not None):
+                        service_val = str(ws.cell(row, service_col).value or "")
+                        if is_drug_screen(service_val):
+                            continue
+                    # Skip WM program level rows for all staff except Melissa
+                    # (Masters retains all rows; only Melissa bills WM)
+                    if (staff_name != "Melissa" and
+                            program_level_col is not None and
+                            is_wm_program_level(ws.cell(row, program_level_col).value)):
+                        continue
+                    for col in range(1, ws.max_column + 1):
+                        new_ws.cell(new_row, col).value = ws.cell(row, col).value
+                    new_row += 1
 
-                if new_row == 2:
-                    continue
+            if new_row == 2:
+                continue
 
-                if staff_name in ["Rosanna", "Jasmine"]:
-                    finalize_workbook(new_wb, exclude_drug_screens=(exclude_drug_screens and staff_name == "Rosanna"))
-                
-                output = io.BytesIO()
-                new_wb.save(output)
-                output.seek(0)
-                output_filename = f"{filename_prefix}{staff_name}.xlsx"
-                output_files[output_filename] = output
-            
-            main_output = io.BytesIO()
-            wb.save(main_output)
-            main_output.seek(0)
-            main_filename = f"{filename_prefix}Masters.xlsx"
-            output_files[main_filename] = main_output
-            
-            logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
+            if staff_name == "Rosanna":
+                finalize_workbook(new_wb, exclude_drug_screens=exclude_drug_screens)
+            elif staff_name == "Jasmine":
+                # Jasmine only gets "Utox Batch" / "Inclusive Services" when
+                # the "Give utox to Jasmine" checkbox is checked.
+                finalize_workbook(new_wb, include_drug_screen_statuses=give_utox_to_jasmine)
 
-            return output_files, invalid_count, date_token, wm_count
-            
+            output = io.BytesIO()
+            new_wb.save(output)
+            output.seek(0)
+            output_filename = f"{filename_prefix}{staff_name}.xlsx"
+            output_files[output_filename] = output
+
+        main_output = io.BytesIO()
+        wb.save(main_output)
+        main_output.seek(0)
+        main_filename = f"{filename_prefix}Masters.xlsx"
+        output_files[main_filename] = main_output
+
+        logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
+
+        return output_files, invalid_count, date_token, wm_count
+
     finally:
         # Always cleanup temp file securely
         if tmp_path:
