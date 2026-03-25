@@ -318,12 +318,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False)
         if not staff and is_non_billable:
             staff = "Unable to Bill"
 
-        # Melissa: (Detox or Residential) + (Aetna or Humana)
+        # Melissa: (Detox or Residential) + (Aetna or Humana), but not drug screens
         if not staff:
             has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             has_insurance = "aetna" in payer or "humana" in payer
 
-            if has_detox_res and has_insurance:
+            if has_detox_res and has_insurance and not is_drug_screen(service):
                 staff = "Melissa"
 
         # CB: Self Pay
@@ -337,10 +337,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False)
                 "partial hospitalization" in service_lower):
                 staff = "Rosanna"
 
-        # Jasmine: (Insurance or blank) + (Detox or Residential)
+        # Jasmine: (Insurance or blank) + (Detox or Residential), but not drug screens
         if not staff and (group == "Insurance" or group == ""):
-            if ("detox" in service_lower or
-                service_lower.startswith("residential")):
+            if (("detox" in service_lower or
+                service_lower.startswith("residential")) and
+                not is_drug_screen(service)):
                 staff = "Jasmine"
 
         # Utox to Jasmine: drug screen rows go to Jasmine when checkbox is enabled
