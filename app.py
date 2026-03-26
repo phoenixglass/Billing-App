@@ -96,12 +96,13 @@ def extract_date_from_filename(filename):
         return match.group(1)
     return None
 
-def _is_ecare(service_lower: str) -> bool:
+def _is_ecare(service: str) -> bool:
     """
     Check if service is e-care (case-insensitive).
-    Handles variants: 'e-care', 'e care', 'ecare'
+    Handles variants: 'e-care', 'e care', 'ecare', 'extended care'
     """
-    return any(variant in service_lower for variant in ['e-care', 'e care', 'ecare'])
+    s = service.lower()
+    return any(variant in s for variant in ['e-care', 'e care', 'ecare', 'extended care'])
 
 def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     """
@@ -201,10 +202,11 @@ def step_1_extract_invalid(ws):
 
     return len(invalid_rows)
 
-def _is_ecare(service_lower: str) -> bool:
+def _is_ecare(service: str) -> bool:
     """Check if service is e-care (handles common variants)"""
-    # Handle common e-care variants: "e-care", "e care", "ecare"
-    return any(variant in service_lower for variant in ["e-care", "e care", "ecare"])
+    # Handle common e-care variants: "e-care", "e care", "ecare", "extended care"
+    s = service.lower()
+    return any(variant in s for variant in ["e-care", "e care", "ecare", "extended care"])
 
 def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     """

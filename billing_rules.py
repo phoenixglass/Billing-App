@@ -31,9 +31,10 @@ def parse_weekday_from_token(date_token: str) -> Tuple[int, bool]:
         return datetime.now().weekday(), True
 
 
-def _is_ecare(service_lower: str) -> bool:
+def _is_ecare(service: str) -> bool:
     """Return True if the service text refers to e-care (many possible variants)."""
-    return any(token in service_lower for token in ("e-care", "e care", "ecare"))
+    s = service.lower()
+    return any(token in s for token in ("e-care", "e care", "ecare", "extended care"))
 
 
 def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:

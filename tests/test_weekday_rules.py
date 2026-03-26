@@ -19,11 +19,15 @@ def test_ecare_variants():
     assert _is_ecare('E-Care')
     assert _is_ecare('E Care')
     assert _is_ecare('ECare')
-    
+    assert _is_ecare('extended care')
+    assert _is_ecare('Extended Care')
+    assert _is_ecare('EXTENDED CARE')
+
     # Test in context
     assert _is_ecare('service e-care session')
     assert _is_ecare('telehealth e care')
-    
+    assert _is_ecare('telehealth extended care')
+
     # Test non-e-care services
     assert not _is_ecare('detox')
     assert not _is_ecare('residential')
@@ -33,12 +37,14 @@ def test_ecare_variants():
 def test_tuesday_bills_everything():
     """Test that Tuesday (weekday=1) bills everything including e-care."""
     weekday = 1  # Tuesday
-    
+
     # E-care should be billable (not non-billable) on Tuesday
     assert not is_non_billable_service_for_weekday('e-care', weekday)
     assert not is_non_billable_service_for_weekday('e care', weekday)
     assert not is_non_billable_service_for_weekday('ecare', weekday)
-    
+    assert not is_non_billable_service_for_weekday('extended care', weekday)
+    assert not is_non_billable_service_for_weekday('Extended Care', weekday)
+
     # All other services should also be billable
     assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
     assert not is_non_billable_service_for_weekday('Residential', weekday)
@@ -49,11 +55,13 @@ def test_tuesday_bills_everything():
 def test_monday_non_billable():
     """Test that Monday (weekday=0) marks specific services as non-billable."""
     weekday = 0  # Monday
-    
+
     # E-care should be non-billable on Monday
     assert is_non_billable_service_for_weekday('e-care', weekday)
     assert is_non_billable_service_for_weekday('E Care', weekday)
     assert is_non_billable_service_for_weekday('ecare session', weekday)
+    assert is_non_billable_service_for_weekday('extended care', weekday)
+    assert is_non_billable_service_for_weekday('Extended Care', weekday)
     
     # These services should be non-billable on Monday
     assert is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
@@ -68,12 +76,14 @@ def test_monday_non_billable():
 def test_wednesday_only_ecare_non_billable():
     """Test that Wednesday (weekday=2) only marks e-care as non-billable."""
     weekday = 2  # Wednesday
-    
+
     # E-care should be non-billable
     assert is_non_billable_service_for_weekday('e-care', weekday)
     assert is_non_billable_service_for_weekday('E Care', weekday)
     assert is_non_billable_service_for_weekday('ecare', weekday)
-    
+    assert is_non_billable_service_for_weekday('extended care', weekday)
+    assert is_non_billable_service_for_weekday('Extended Care', weekday)
+
     # All other services should be billable on Wednesday
     assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
     assert not is_non_billable_service_for_weekday('Residential', weekday)
@@ -84,10 +94,12 @@ def test_wednesday_only_ecare_non_billable():
 def test_thursday_only_ecare_non_billable():
     """Test that Thursday (weekday=3) only marks e-care as non-billable."""
     weekday = 3  # Thursday
-    
+
     # E-care should be non-billable
     assert is_non_billable_service_for_weekday('e-care', weekday)
-    
+    assert is_non_billable_service_for_weekday('extended care', weekday)
+    assert is_non_billable_service_for_weekday('Extended Care', weekday)
+
     # All other services should be billable
     assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
     assert not is_non_billable_service_for_weekday('Residential', weekday)
@@ -97,10 +109,12 @@ def test_thursday_only_ecare_non_billable():
 def test_friday_only_ecare_non_billable():
     """Test that Friday (weekday=4) only marks e-care as non-billable."""
     weekday = 4  # Friday
-    
+
     # E-care should be non-billable
     assert is_non_billable_service_for_weekday('e-care', weekday)
-    
+    assert is_non_billable_service_for_weekday('extended care', weekday)
+    assert is_non_billable_service_for_weekday('Extended Care', weekday)
+
     # All other services should be billable
     assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
     assert not is_non_billable_service_for_weekday('Residential', weekday)
@@ -111,11 +125,13 @@ def test_weekend_only_ecare_non_billable():
     # Saturday
     weekday = 5
     assert is_non_billable_service_for_weekday('e-care', weekday)
+    assert is_non_billable_service_for_weekday('extended care', weekday)
     assert not is_non_billable_service_for_weekday('Detox', weekday)
-    
+
     # Sunday
     weekday = 6
     assert is_non_billable_service_for_weekday('e-care', weekday)
+    assert is_non_billable_service_for_weekday('Extended Care', weekday)
     assert not is_non_billable_service_for_weekday('Residential', weekday)
 
 
