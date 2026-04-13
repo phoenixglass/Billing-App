@@ -184,12 +184,14 @@ def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
         return _is_ecare(service_lower)
 
-def assign_staff(ws, date_token: str = None):
+def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = False):
     """Assign staff names based on business rules
-    
+
     Args:
         ws: Worksheet to process
         date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
+        route_iop_acu_to_rosanna: If True, only IOP and Acupuncture go to Rosanna and all
+            remaining services default to Jasmine instead of Rosanna.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -268,11 +270,17 @@ def assign_staff(ws, date_token: str = None):
             staff = "CB"
 
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
+        # When route_iop_acu_to_rosanna is enabled, only IOP and Acupuncture go to Rosanna
         if not staff and group == "Insurance":
-            if ("iop" in service_lower or 
-                service_lower.startswith("acupuncture") or 
-                "partial hospitalization" in service_lower):
-                staff = "Rosanna"
+            if route_iop_acu_to_rosanna:
+                if ("iop" in service_lower or
+                    service_lower.startswith("acupuncture")):
+                    staff = "Rosanna"
+            else:
+                if ("iop" in service_lower or
+                    service_lower.startswith("acupuncture") or
+                    "partial hospitalization" in service_lower):
+                    staff = "Rosanna"
 
         # Melissa: (Detox or Residential but NOT Drug Screen) + (Aetna or Humana)
         # CHECK MELISSA BEFORE JASMINE - she's more specific
@@ -280,7 +288,7 @@ def assign_staff(ws, date_token: str = None):
             has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             no_drug_screen = "drug screen" not in service_lower
             has_insurance = "aetna" in payer_lower or "humana" in payer_lower
-            
+
             if has_detox_res and no_drug_screen and has_insurance:
                 staff = "Melissa"
 
@@ -290,9 +298,10 @@ def assign_staff(ws, date_token: str = None):
                 service_lower.startswith("residential")):
                 staff = "Jasmine"
 
-        # Rosanna_2: Fill remaining blanks
+        # Fill remaining blanks: Jasmine when route_iop_acu_to_rosanna is enabled,
+        # otherwise Rosanna (default)
         if not staff:
-            staff = "Rosanna"
+            staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
 
         ws.cell(row, 1).value = staff
 
