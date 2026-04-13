@@ -239,13 +239,16 @@ def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
         return _is_ecare(service_lower)
 
-def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False):
+def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
+                 route_iop_acu_to_rosanna: bool = False):
     """Assign staff names based on business rules
 
     Args:
         ws: Worksheet to process
         date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
         give_utox_to_jasmine: If True, drug screen (utox) rows are assigned to Jasmine.
+        route_iop_acu_to_rosanna: If True, only IOP and Acupuncture go to Rosanna and all
+            remaining services default to Jasmine instead of Rosanna.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -333,11 +336,17 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False)
             staff = "CB"
 
         # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
+        # When route_iop_acu_to_rosanna is enabled, only IOP and Acupuncture go to Rosanna
         if not staff and group == "Insurance":
-            if ("iop" in service_lower or 
-                service_lower.startswith("acupuncture") or 
-                "partial hospitalization" in service_lower):
-                staff = "Rosanna"
+            if route_iop_acu_to_rosanna:
+                if ("iop" in service_lower or
+                    service_lower.startswith("acupuncture")):
+                    staff = "Rosanna"
+            else:
+                if ("iop" in service_lower or
+                    service_lower.startswith("acupuncture") or
+                    "partial hospitalization" in service_lower):
+                    staff = "Rosanna"
 
         # Jasmine: (Insurance or blank) + (Detox or Residential), but not drug screens
         if not staff and (group == "Insurance" or group == ""):
@@ -350,9 +359,10 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False)
         if not staff and give_utox_to_jasmine and is_drug_screen(service):
             staff = "Jasmine"
 
-        # Rosanna_2: Fill remaining blanks
+        # Fill remaining blanks: Jasmine when route_iop_acu_to_rosanna is enabled,
+        # otherwise Rosanna (default)
         if not staff:
-            staff = "Rosanna"
+            staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
 
         ws.cell(row, 1).value = staff
 
@@ -458,7 +468,8 @@ def secure_cleanup(file_path):
         logger.error(f"Error during secure cleanup: {e}")
 
 def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
-                     exclude_optum: bool = False, give_utox_to_jasmine: bool = False):
+                     exclude_optum: bool = False, give_utox_to_jasmine: bool = False,
+                     route_iop_acu_to_rosanna: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -478,7 +489,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
         filename_prefix = get_filename_prefix(uploaded_file.name)
 
         invalid_count = step_1_extract_invalid(ws)
-        assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine)
+        assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine,
+                     route_iop_acu_to_rosanna=route_iop_acu_to_rosanna)
 
         output_files = {}
 
@@ -593,6 +605,12 @@ give_utox_to_jasmine = st.checkbox(
     help="When checked, utox (drug screen) rows will be assigned to Jasmine in the master spreadsheet and included in Jasmine's workbook."
 )
 
+route_iop_acu_to_rosanna = st.checkbox(
+    "Route IOP and Acupuncture to Rosanna (all other services to Jasmine)",
+    value=False,
+    help="When checked, only IOP and Acupuncture services go to Rosanna. All remaining services (including Partial Hospitalization) default to Jasmine instead of Rosanna."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
@@ -601,6 +619,7 @@ if uploaded_file is not None:
             exclude_drug_screens=exclude_drug_screens,
             exclude_optum=exclude_optum,
             give_utox_to_jasmine=give_utox_to_jasmine,
+            route_iop_acu_to_rosanna=route_iop_acu_to_rosanna,
         )
 
         if wm_count > 0:
