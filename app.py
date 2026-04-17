@@ -563,6 +563,16 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_bcb_anthem_ct_php_res_detox(payer_val, service_val):
                             continue
+                    if (rosanna_php_iop_only and staff_name == "Rosanna" and
+                            service_col is not None):
+                        service_val = str(ws.cell(row, service_col).value or "").lower()
+                        if not ("iop" in service_val or "partial hospitalization" in service_val or "php" in service_val):
+                            continue
+                    if (jasmine_detox_residential_only and staff_name == "Jasmine" and
+                            service_col is not None):
+                        service_val = str(ws.cell(row, service_col).value or "").lower()
+                        if not ("detox" in service_val or "residential" in service_val):
+                            continue
                     # Skip WM program level rows for all staff except Melissa
                     # (Masters retains all rows; only Melissa bills WM)
                     if (staff_name != "Melissa" and
