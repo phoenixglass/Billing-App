@@ -184,7 +184,9 @@ def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
     else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
         return _is_ecare(service_lower)
 
-def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = False):
+def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = False,
+                 rosanna_php_iop_only: bool = False,
+                 jasmine_detox_residential_only: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -192,6 +194,10 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
         date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
         route_iop_acu_to_rosanna: If True, only IOP and Acupuncture go to Rosanna and all
             remaining services default to Jasmine instead of Rosanna.
+        rosanna_php_iop_only: If True, only PHP (Partial Hospitalization) and IOP go to
+            Rosanna (Acupuncture excluded).
+        jasmine_detox_residential_only: If True, Jasmine only receives Detox and Residential
+            rows; she is not used as the fallback default for unmatched services.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -269,10 +275,12 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
         if not staff and group == "Self Pay":
             staff = "CB"
 
-        # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
-        # When route_iop_acu_to_rosanna is enabled, only IOP and Acupuncture go to Rosanna
+        # Rosanna: Insurance + services based on active option
         if not staff and group == "Insurance":
-            if route_iop_acu_to_rosanna:
+            if rosanna_php_iop_only:
+                if ("iop" in service_lower or "partial hospitalization" in service_lower):
+                    staff = "Rosanna"
+            elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                     service_lower.startswith("acupuncture")):
                     staff = "Rosanna"
@@ -298,10 +306,12 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
                 service_lower.startswith("residential")):
                 staff = "Jasmine"
 
-        # Fill remaining blanks: Jasmine when route_iop_acu_to_rosanna is enabled,
-        # otherwise Rosanna (default)
+        # Fill remaining blanks
         if not staff:
-            staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
+            if jasmine_detox_residential_only:
+                staff = "Rosanna"
+            else:
+                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
 
         ws.cell(row, 1).value = staff
 

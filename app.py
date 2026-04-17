@@ -240,7 +240,9 @@ def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
         return _is_ecare(service_lower)
 
 def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
-                 route_iop_acu_to_rosanna: bool = False):
+                 route_iop_acu_to_rosanna: bool = False,
+                 rosanna_php_iop_only: bool = False,
+                 jasmine_detox_residential_only: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -249,6 +251,10 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         give_utox_to_jasmine: If True, drug screen (utox) rows are assigned to Jasmine.
         route_iop_acu_to_rosanna: If True, only IOP and Acupuncture go to Rosanna and all
             remaining services default to Jasmine instead of Rosanna.
+        rosanna_php_iop_only: If True, only PHP (Partial Hospitalization) and IOP go to
+            Rosanna (Acupuncture excluded).
+        jasmine_detox_residential_only: If True, Jasmine only receives Detox and Residential
+            rows; she is not used as the fallback default for unmatched services.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -335,10 +341,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         if not staff and group == "Self Pay":
             staff = "CB"
 
-        # Rosanna_1: Insurance + (IOP or Acupuncture or Partial Hospitalization)
-        # When route_iop_acu_to_rosanna is enabled, only IOP and Acupuncture go to Rosanna
+        # Rosanna: Insurance + services based on active option
         if not staff and group == "Insurance":
-            if route_iop_acu_to_rosanna:
+            if rosanna_php_iop_only:
+                if ("iop" in service_lower or "partial hospitalization" in service_lower):
+                    staff = "Rosanna"
+            elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                     service_lower.startswith("acupuncture")):
                     staff = "Rosanna"
@@ -359,10 +367,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         if not staff and give_utox_to_jasmine and is_drug_screen(service):
             staff = "Jasmine"
 
-        # Fill remaining blanks: Jasmine when route_iop_acu_to_rosanna is enabled,
-        # otherwise Rosanna (default)
+        # Fill remaining blanks
         if not staff:
-            staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
+            if jasmine_detox_residential_only:
+                staff = "Rosanna"
+            else:
+                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
 
         ws.cell(row, 1).value = staff
 
@@ -467,9 +477,17 @@ def secure_cleanup(file_path):
     except Exception as e:
         logger.error(f"Error during secure cleanup: {e}")
 
+def is_bcb_anthem_ct_php_res_detox(payer: str, service: str) -> bool:
+    """Return True if payer is BCB Anthem CT and service is PHP, Residential, or Detox."""
+    return ("bcb anthem ct" in payer.lower() and
+            any(s in service.lower() for s in ["partial hospitalization", "residential", "detox"]))
+
 def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      exclude_optum: bool = False, give_utox_to_jasmine: bool = False,
-                     route_iop_acu_to_rosanna: bool = False):
+                     route_iop_acu_to_rosanna: bool = False,
+                     exclude_bcb_anthem_ct: bool = False,
+                     rosanna_php_iop_only: bool = False,
+                     jasmine_detox_residential_only: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -490,7 +508,9 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
 
         invalid_count = step_1_extract_invalid(ws)
         assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine,
-                     route_iop_acu_to_rosanna=route_iop_acu_to_rosanna)
+                     route_iop_acu_to_rosanna=route_iop_acu_to_rosanna,
+                     rosanna_php_iop_only=rosanna_php_iop_only,
+                     jasmine_detox_residential_only=jasmine_detox_residential_only)
 
         output_files = {}
 
@@ -536,6 +556,12 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                             service_col is not None):
                         service_val = str(ws.cell(row, service_col).value or "")
                         if is_drug_screen(service_val):
+                            continue
+                    if (exclude_bcb_anthem_ct and service_col is not None and
+                            payer_col is not None):
+                        service_val = str(ws.cell(row, service_col).value or "")
+                        payer_val = str(ws.cell(row, payer_col).value or "")
+                        if is_bcb_anthem_ct_php_res_detox(payer_val, service_val):
                             continue
                     # Skip WM program level rows for all staff except Melissa
                     # (Masters retains all rows; only Melissa bills WM)
@@ -611,6 +637,24 @@ route_iop_acu_to_rosanna = st.checkbox(
     help="When checked, only IOP and Acupuncture services go to Rosanna. All remaining services (including Partial Hospitalization) default to Jasmine instead of Rosanna."
 )
 
+exclude_bcb_anthem_ct = st.checkbox(
+    "Exclude BCB Anthem CT for PHP, Residential, and Detox",
+    value=False,
+    help="When checked, rows where the payer is BCB Anthem CT and the service is PHP (Partial Hospitalization), Residential, or Detox will be excluded from all individual staff workbooks."
+)
+
+rosanna_php_iop_only = st.checkbox(
+    "Give Rosanna only PHP and IOP",
+    value=False,
+    help="When checked, Rosanna only receives PHP (Partial Hospitalization) and IOP services. Acupuncture will not be routed to Rosanna."
+)
+
+jasmine_detox_residential_only = st.checkbox(
+    "Give Jasmine only Detox and Residential",
+    value=False,
+    help="When checked, Jasmine only receives Detox and Residential services. She will not be used as the fallback default for unmatched services."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
@@ -620,6 +664,9 @@ if uploaded_file is not None:
             exclude_optum=exclude_optum,
             give_utox_to_jasmine=give_utox_to_jasmine,
             route_iop_acu_to_rosanna=route_iop_acu_to_rosanna,
+            exclude_bcb_anthem_ct=exclude_bcb_anthem_ct,
+            rosanna_php_iop_only=rosanna_php_iop_only,
+            jasmine_detox_residential_only=jasmine_detox_residential_only,
         )
 
         if wm_count > 0:
