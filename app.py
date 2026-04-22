@@ -242,7 +242,9 @@ def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
 def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  route_iop_acu_to_rosanna: bool = False,
                  rosanna_php_iop_only: bool = False,
-                 jasmine_detox_residential_only: bool = False):
+                 jasmine_detox_residential_only: bool = False,
+                 rosanna_iop_php_acu: bool = False,
+                 jasmine_inpatient_professional: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -255,6 +257,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             Rosanna (Acupuncture excluded).
         jasmine_detox_residential_only: If True, Jasmine only receives Detox and Residential
             rows; she is not used as the fallback default for unmatched services.
+        rosanna_iop_php_acu: If True, Rosanna receives IOP, PHP, and Acupuncture services.
+        jasmine_inpatient_professional: If True, Jasmine receives inpatient (Detox/Residential)
+            and all professional outpatient services.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -304,9 +309,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         staff = None
 
-        # WM Program Level: always assigned to Melissa
+        # OP WM Program Level → OWM workbook (checked before WM to avoid overlap)
         if 'program_level' in cols:
-            if is_wm_program_level(ws.cell(row, cols['program_level']).value):
+            pl_value = ws.cell(row, cols['program_level']).value
+            if is_op_wm_program_level(pl_value):
+                staff = "OWM"
+            elif is_wm_program_level(pl_value):
                 staff = "Melissa"
 
         if staff:
@@ -343,17 +351,22 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         # Rosanna: Insurance + services based on active option
         if not staff and group == "Insurance":
-            if rosanna_php_iop_only:
-                if ("iop" in service_lower or "partial hospitalization" in service_lower):
+            if rosanna_iop_php_acu:
+                if ("iop" in service_lower or "partial hospitalization" in service_lower or
+                        "php" in service_lower or service_lower.startswith("acupuncture")):
+                    staff = "Rosanna"
+            elif rosanna_php_iop_only:
+                if ("iop" in service_lower or "partial hospitalization" in service_lower or
+                        "php" in service_lower):
                     staff = "Rosanna"
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
-                    service_lower.startswith("acupuncture")):
+                        service_lower.startswith("acupuncture")):
                     staff = "Rosanna"
             else:
                 if ("iop" in service_lower or
-                    service_lower.startswith("acupuncture") or
-                    "partial hospitalization" in service_lower):
+                        service_lower.startswith("acupuncture") or
+                        "partial hospitalization" in service_lower):
                     staff = "Rosanna"
 
         # Jasmine: (Insurance or blank) + (Detox or Residential), but not drug screens
@@ -366,6 +379,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         # Utox to Jasmine: drug screen rows go to Jasmine when checkbox is enabled
         if not staff and give_utox_to_jasmine and is_drug_screen(service):
             staff = "Jasmine"
+
+        # Jasmine: inpatient (detox/residential) and all professional services
+        if not staff and jasmine_inpatient_professional and (group == "Insurance" or group == ""):
+            if ("detox" in service_lower or "residential" in service_lower or
+                    is_professional_service(service)):
+                staff = "Jasmine"
 
         # Fill remaining blanks
         if not staff:
@@ -463,6 +482,27 @@ def is_wm_program_level(cell_value) -> bool:
     """Return True if the Program Level cell contains 'WM'."""
     return "WM" in str(cell_value or "").upper()
 
+def is_op_wm_program_level(cell_value) -> bool:
+    """Return True if the Program Level cell contains 'OP WM'."""
+    return "OP WM" in str(cell_value or "").upper()
+
+def is_anthem_payer(payer: str) -> bool:
+    """Return True if the payer contains 'anthem'."""
+    return "anthem" in payer.lower()
+
+def is_professional_service(service: str) -> bool:
+    """Return True for professional outpatient services (not IOP/PHP/acupuncture/detox/residential/drug screen)."""
+    s = service.lower()
+    return (
+        "iop" not in s and
+        "partial hospitalization" not in s and
+        "php" not in s and
+        not s.startswith("acupuncture") and
+        "detox" not in s and
+        "residential" not in s and
+        not is_drug_screen(service)
+    )
+
 def secure_cleanup(file_path):
     """Securely delete temporary file."""
     try:
@@ -487,7 +527,10 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      route_iop_acu_to_rosanna: bool = False,
                      exclude_bcb_anthem_ct: bool = False,
                      rosanna_php_iop_only: bool = False,
-                     jasmine_detox_residential_only: bool = False):
+                     jasmine_detox_residential_only: bool = False,
+                     rosanna_iop_php_acu: bool = False,
+                     jasmine_inpatient_professional: bool = False,
+                     exclude_anthem_rosanna_jasmine_owm: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -510,7 +553,9 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
         assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine,
                      route_iop_acu_to_rosanna=route_iop_acu_to_rosanna,
                      rosanna_php_iop_only=rosanna_php_iop_only,
-                     jasmine_detox_residential_only=jasmine_detox_residential_only)
+                     jasmine_detox_residential_only=jasmine_detox_residential_only,
+                     rosanna_iop_php_acu=rosanna_iop_php_acu,
+                     jasmine_inpatient_professional=jasmine_inpatient_professional)
 
         output_files = {}
 
@@ -527,14 +572,18 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             elif header == "Payer":
                 payer_col = col
 
-        # Count WM rows for alert
+        # Count WM and OWM rows for alerts (OP WM goes to OWM, not Melissa)
         wm_count = 0
+        owm_count = 0
         if program_level_col is not None:
             for row in range(2, ws.max_row + 1):
-                if is_wm_program_level(ws.cell(row, program_level_col).value):
+                pl = ws.cell(row, program_level_col).value
+                if is_op_wm_program_level(pl):
+                    owm_count += 1
+                elif is_wm_program_level(pl):
                     wm_count += 1
 
-        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
+        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill", "OWM"]:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
@@ -568,14 +617,31 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                         service_val = str(ws.cell(row, service_col).value or "").lower()
                         if not ("iop" in service_val or "partial hospitalization" in service_val or "php" in service_val):
                             continue
-                    if (jasmine_detox_residential_only and staff_name == "Jasmine" and
+                    if (rosanna_iop_php_acu and staff_name == "Rosanna" and
                             service_col is not None):
                         service_val = str(ws.cell(row, service_col).value or "").lower()
-                        if not ("detox" in service_val or "residential" in service_val):
+                        if not ("iop" in service_val or "partial hospitalization" in service_val or
+                                "php" in service_val or service_val.startswith("acupuncture")):
                             continue
-                    # Skip WM program level rows for all staff except Melissa
-                    # (Masters retains all rows; only Melissa bills WM)
-                    if (staff_name != "Melissa" and
+                    if (jasmine_detox_residential_only and staff_name == "Jasmine" and
+                            service_col is not None):
+                        service_val = str(ws.cell(row, service_col).value or "")
+                        service_lower_val = service_val.lower()
+                        if not ("detox" in service_lower_val or "residential" in service_lower_val):
+                            if not (jasmine_inpatient_professional and
+                                    ("detox" in service_lower_val or
+                                     "residential" in service_lower_val or
+                                     is_professional_service(service_val))):
+                                continue
+                    if (exclude_anthem_rosanna_jasmine_owm and
+                            staff_name in ("Rosanna", "Jasmine", "OWM") and
+                            payer_col is not None):
+                        payer_val = str(ws.cell(row, payer_col).value or "")
+                        if is_anthem_payer(payer_val):
+                            continue
+                    # Skip WM program level rows for all staff except their intended recipient
+                    # (Masters retains all rows; Melissa bills WM, OWM bills OP WM)
+                    if (staff_name not in ("Melissa", "OWM") and
                             program_level_col is not None and
                             is_wm_program_level(ws.cell(row, program_level_col).value)):
                         continue
@@ -607,7 +673,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
 
         logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
 
-        return output_files, invalid_count, date_token, wm_count
+        return output_files, invalid_count, date_token, wm_count, owm_count
 
     finally:
         # Always cleanup temp file securely
@@ -665,10 +731,28 @@ jasmine_detox_residential_only = st.checkbox(
     help="When checked, Jasmine only receives Detox and Residential services. She will not be used as the fallback default for unmatched services."
 )
 
+rosanna_iop_php_acu = st.checkbox(
+    "Give Rosanna IOP, PHP, and Acupuncture",
+    value=False,
+    help="When checked, Rosanna receives IOP, PHP (Partial Hospitalization), and Acupuncture services. Her workbook is filtered to only these three service types."
+)
+
+jasmine_inpatient_professional = st.checkbox(
+    "Give Jasmine Inpatient (Detox/Residential) and all Professional services",
+    value=False,
+    help="When checked, Jasmine receives inpatient services (Detox and Residential) as well as all professional outpatient services. Also expands her workbook when 'Give Jasmine only Detox and Residential' is active."
+)
+
+exclude_anthem_rosanna_jasmine_owm = st.checkbox(
+    "Remove Anthem from Rosanna, Jasmine, and OWM reports",
+    value=False,
+    help="When checked, rows where the payer contains 'Anthem' will be excluded from Rosanna's, Jasmine's, and OWM's workbooks. Anthem rows are still retained in the Masters report."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token, wm_count = process_workbook(
+        output_files, invalid_count, date_token, wm_count, owm_count = process_workbook(
             uploaded_file,
             exclude_drug_screens=exclude_drug_screens,
             exclude_optum=exclude_optum,
@@ -677,6 +761,9 @@ if uploaded_file is not None:
             exclude_bcb_anthem_ct=exclude_bcb_anthem_ct,
             rosanna_php_iop_only=rosanna_php_iop_only,
             jasmine_detox_residential_only=jasmine_detox_residential_only,
+            rosanna_iop_php_acu=rosanna_iop_php_acu,
+            jasmine_inpatient_professional=jasmine_inpatient_professional,
+            exclude_anthem_rosanna_jasmine_owm=exclude_anthem_rosanna_jasmine_owm,
         )
 
         if wm_count > 0:
@@ -684,6 +771,11 @@ if uploaded_file is not None:
                 f"⚠️ Alert: {wm_count} row(s) with 'WM' in the Program Level column were found. "
                 "These rows are only included in Masters and Melissa's report. "
                 "Only Melissa is authorized to bill WM."
+            )
+        if owm_count > 0:
+            st.warning(
+                f"⚠️ Alert: {owm_count} row(s) with 'OP WM' in the Program Level column were found. "
+                "These rows are included in Masters and the OWM report."
             )
 
         st.success("✓ Processing complete!")
