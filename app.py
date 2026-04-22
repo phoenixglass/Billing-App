@@ -309,12 +309,10 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         staff = None
 
-        # OP WM Program Level → OWM workbook (checked before WM to avoid overlap)
+        # WM / OP WM Program Level → Melissa
         if 'program_level' in cols:
             pl_value = ws.cell(row, cols['program_level']).value
-            if is_op_wm_program_level(pl_value):
-                staff = "OWM"
-            elif is_wm_program_level(pl_value):
+            if is_wm_program_level(pl_value):
                 staff = "Melissa"
 
         if staff:
@@ -572,18 +570,15 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             elif header == "Payer":
                 payer_col = col
 
-        # Count WM and OWM rows for alerts (OP WM goes to OWM, not Melissa)
+        # Count WM rows for alerts (both WM and OP WM go to Melissa)
         wm_count = 0
-        owm_count = 0
         if program_level_col is not None:
             for row in range(2, ws.max_row + 1):
                 pl = ws.cell(row, program_level_col).value
-                if is_op_wm_program_level(pl):
-                    owm_count += 1
-                elif is_wm_program_level(pl):
+                if is_wm_program_level(pl):
                     wm_count += 1
 
-        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill", "OWM"]:
+        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
@@ -634,14 +629,13 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                                      is_professional_service(service_val))):
                                 continue
                     if (exclude_anthem_rosanna_jasmine_owm and
-                            staff_name in ("Rosanna", "Jasmine", "OWM") and
+                            staff_name in ("Rosanna", "Jasmine") and
                             payer_col is not None):
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_anthem_payer(payer_val):
                             continue
-                    # Skip WM program level rows for all staff except their intended recipient
-                    # (Masters retains all rows; Melissa bills WM, OWM bills OP WM)
-                    if (staff_name not in ("Melissa", "OWM") and
+                    # Skip WM/OP WM program level rows for all staff except Melissa
+                    if (staff_name != "Melissa" and
                             program_level_col is not None and
                             is_wm_program_level(ws.cell(row, program_level_col).value)):
                         continue
@@ -673,7 +667,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
 
         logger.info(f"Successfully processed file: {uploaded_file.name}, generated {len(output_files)} output files")
 
-        return output_files, invalid_count, date_token, wm_count, owm_count
+        return output_files, invalid_count, date_token, wm_count
 
     finally:
         # Always cleanup temp file securely
@@ -744,15 +738,15 @@ jasmine_inpatient_professional = st.checkbox(
 )
 
 exclude_anthem_rosanna_jasmine_owm = st.checkbox(
-    "Remove Anthem from Rosanna, Jasmine, and OWM reports",
+    "Remove Anthem from Rosanna and Jasmine reports",
     value=False,
-    help="When checked, rows where the payer contains 'Anthem' will be excluded from Rosanna's, Jasmine's, and OWM's workbooks. Anthem rows are still retained in the Masters report."
+    help="When checked, rows where the payer contains 'Anthem' will be excluded from Rosanna's and Jasmine's workbooks. Anthem rows are still retained in the Masters report."
 )
 
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
-        output_files, invalid_count, date_token, wm_count, owm_count = process_workbook(
+        output_files, invalid_count, date_token, wm_count = process_workbook(
             uploaded_file,
             exclude_drug_screens=exclude_drug_screens,
             exclude_optum=exclude_optum,
@@ -768,14 +762,9 @@ if uploaded_file is not None:
 
         if wm_count > 0:
             st.warning(
-                f"⚠️ Alert: {wm_count} row(s) with 'WM' in the Program Level column were found. "
+                f"⚠️ Alert: {wm_count} row(s) with 'WM' or 'OP WM' in the Program Level column were found. "
                 "These rows are only included in Masters and Melissa's report. "
                 "Only Melissa is authorized to bill WM."
-            )
-        if owm_count > 0:
-            st.warning(
-                f"⚠️ Alert: {owm_count} row(s) with 'OP WM' in the Program Level column were found. "
-                "These rows are included in Masters and the OWM report."
             )
 
         st.success("✓ Processing complete!")
