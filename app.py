@@ -256,7 +256,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  jasmine_detox_residential_only: bool = False,
                  rosanna_iop_php_acu: bool = False,
                  jasmine_inpatient_professional: bool = False,
-                 php_on_monday: bool = False):
+                 php_on_monday: bool = False,
+                 rosanna_iop_jasmine_php: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -273,6 +274,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         jasmine_inpatient_professional: If True, Jasmine receives inpatient (Detox/Residential)
             and all professional outpatient services.
         php_on_monday: If True, Partial Hospitalization is treated as billable on Mondays.
+        rosanna_iop_jasmine_php: If True, IOP goes to Rosanna and PHP (Partial Hospitalization)
+            goes to Jasmine. Day-of-week rules still apply.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -370,6 +373,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                 if ("iop" in service_lower or "partial hospitalization" in service_lower or
                         "php" in service_lower):
                     staff = "Rosanna"
+            elif rosanna_iop_jasmine_php:
+                if "iop" in service_lower:
+                    staff = "Rosanna"
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture")):
@@ -381,10 +387,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                     staff = "Rosanna"
 
         # Jasmine: (Insurance or blank) + (Detox or Residential), but not drug screens
+        # Also receives PHP when rosanna_iop_jasmine_php is enabled
         if not staff and (group == "Insurance" or group == ""):
-            if (("detox" in service_lower or
-                service_lower.startswith("residential")) and
-                not is_drug_screen(service)):
+            is_detox_res = ("detox" in service_lower or service_lower.startswith("residential"))
+            is_php = ("partial hospitalization" in service_lower or "php" in service_lower)
+            if ((is_detox_res or (rosanna_iop_jasmine_php and is_php)) and
+                    not is_drug_screen(service)):
                 staff = "Jasmine"
 
         # Utox to Jasmine: drug screen rows go to Jasmine when checkbox is enabled
@@ -542,7 +550,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      rosanna_iop_php_acu: bool = False,
                      jasmine_inpatient_professional: bool = False,
                      exclude_anthem_rosanna_jasmine_owm: bool = False,
-                     php_on_monday: bool = False):
+                     php_on_monday: bool = False,
+                     rosanna_iop_jasmine_php: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -568,7 +577,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      jasmine_detox_residential_only=jasmine_detox_residential_only,
                      rosanna_iop_php_acu=rosanna_iop_php_acu,
                      jasmine_inpatient_professional=jasmine_inpatient_professional,
-                     php_on_monday=php_on_monday)
+                     php_on_monday=php_on_monday,
+                     rosanna_iop_jasmine_php=rosanna_iop_jasmine_php)
 
         output_files = {}
 
@@ -764,6 +774,12 @@ php_on_monday = st.checkbox(
     help="When checked, Partial Hospitalization services will be treated as billable on Mondays instead of being marked 'Unable to Bill'."
 )
 
+rosanna_iop_jasmine_php = st.checkbox(
+    "Give Rosanna IOP and Jasmine PHP",
+    value=False,
+    help="When checked, IOP services go to Rosanna and PHP (Partial Hospitalization) services go to Jasmine. All day-of-week rules still apply."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
@@ -780,6 +796,7 @@ if uploaded_file is not None:
             jasmine_inpatient_professional=jasmine_inpatient_professional,
             exclude_anthem_rosanna_jasmine_owm=exclude_anthem_rosanna_jasmine_owm,
             php_on_monday=php_on_monday,
+            rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
         )
 
         if wm_count > 0:
