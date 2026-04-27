@@ -135,6 +135,29 @@ def test_weekend_only_ecare_non_billable():
     assert not is_non_billable_service_for_weekday('Residential', weekday)
 
 
+def test_php_on_monday_option():
+    """Test that php_on_monday=True makes Partial Hospitalization billable on Mondays."""
+    weekday = 0  # Monday
+
+    # Default: PHP is non-billable on Monday
+    assert is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
+    assert is_non_billable_service_for_weekday('partial hospitalization', weekday)
+
+    # With php_on_monday=True: PHP is billable on Monday
+    assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday, php_on_monday=True)
+    assert not is_non_billable_service_for_weekday('partial hospitalization', weekday, php_on_monday=True)
+
+    # php_on_monday=True does NOT affect other Monday restrictions
+    assert is_non_billable_service_for_weekday('Residential', weekday, php_on_monday=True)
+    assert is_non_billable_service_for_weekday('Detox', weekday, php_on_monday=True)
+    assert is_non_billable_service_for_weekday('e-care', weekday, php_on_monday=True)
+
+    # php_on_monday has no effect on other days (PHP is already billable)
+    assert not is_non_billable_service_for_weekday('Partial Hospitalization', 1, php_on_monday=True)
+    assert not is_non_billable_service_for_weekday('Partial Hospitalization', 2, php_on_monday=True)
+    assert not is_non_billable_service_for_weekday('Partial Hospitalization', 3, php_on_monday=True)
+
+
 def test_case_insensitive_matching():
     """Test that service matching is case-insensitive."""
     weekday = 0  # Monday
@@ -174,7 +197,10 @@ if __name__ == '__main__':
     test_weekend_only_ecare_non_billable()
     print("✓ test_weekend_only_ecare_non_billable passed")
     
+    test_php_on_monday_option()
+    print("✓ test_php_on_monday_option passed")
+
     test_case_insensitive_matching()
     print("✓ test_case_insensitive_matching passed")
-    
+
     print("\nAll tests passed!")

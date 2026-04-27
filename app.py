@@ -104,43 +104,49 @@ def _is_ecare(service: str) -> bool:
     s = service.lower()
     return any(variant in s for variant in ['e-care', 'e care', 'ecare', 'extended care'])
 
-def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
+def is_non_billable_service_for_weekday(
+    service: str, weekday: int, php_on_monday: bool = False
+) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
-    
+
     Weekday rules:
     - Tuesday (1): Everything billable (including e-care)
     - Monday (0): Non-billable: partial hospitalization, residential, detox, e-care
+      - php_on_monday=True exempts partial hospitalization from the Monday restriction
     - Wednesday-Friday (2,3,4): All services billable except e-care
     - Saturday-Sunday (5,6): e-care non-billable (treat like Wed-Fri)
-    
+
     E-care is only billable on Tuesdays.
-    
+
     Args:
         service: Service name (case-insensitive matching)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-    
+        php_on_monday: When True, partial hospitalization is billable on Mondays
+
     Returns:
         True if service is non-billable for the given weekday
     """
     service_lower = service.lower()
-    
+
     # Tuesday: everything billable
     if weekday == 1:
         return False
-    
+
     # Monday: non-billable services
     if weekday == 0:
         if _is_ecare(service_lower):
             return True
-        if any(s in service_lower for s in ['partial hospitalization', 'residential', 'detox']):
+        if 'residential' in service_lower or 'detox' in service_lower:
+            return True
+        if 'partial hospitalization' in service_lower and not php_on_monday:
             return True
         return False
-    
+
     # Wednesday-Sunday (2,3,4,5,6): e-care non-billable
     if weekday in [2, 3, 4, 5, 6]:
         return _is_ecare(service_lower)
-    
+
     return False
 
 def get_filename_prefix(filename):
@@ -208,34 +214,39 @@ def _is_ecare(service: str) -> bool:
     s = service.lower()
     return any(variant in s for variant in ["e-care", "e care", "ecare", "extended care"])
 
-def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
+def is_non_billable_service_for_weekday(
+    service: str, weekday: int, php_on_monday: bool = False
+) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
-    
+
     Weekday rules:
     - Tuesday (1): all services billed (including e-care)
     - Monday (0): non-billable: partial hospitalization, residential, detox, e-care
+      - php_on_monday=True exempts partial hospitalization from the Monday restriction
     - Wednesday-Friday (2,3,4): bill all services except e-care
     - Saturday-Sunday (5,6): bill all services except e-care
-    
+
     Args:
         service: Service name (case-insensitive)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-    
+        php_on_monday: When True, partial hospitalization is billable on Mondays
+
     Returns:
         True if service is non-billable for this weekday
     """
     service_lower = service.lower()
-    
+
     if weekday == 1:  # Tuesday - bill all services
         return False
     elif weekday == 0:  # Monday - multiple non-billable services
-        return (
-            "partial hospitalization" in service_lower or
-            "residential" in service_lower or
-            "detox" in service_lower or
-            _is_ecare(service_lower)
-        )
+        if _is_ecare(service_lower):
+            return True
+        if "residential" in service_lower or "detox" in service_lower:
+            return True
+        if "partial hospitalization" in service_lower and not php_on_monday:
+            return True
+        return False
     else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
         return _is_ecare(service_lower)
 
@@ -244,7 +255,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  rosanna_php_iop_only: bool = False,
                  jasmine_detox_residential_only: bool = False,
                  rosanna_iop_php_acu: bool = False,
-                 jasmine_inpatient_professional: bool = False):
+                 jasmine_inpatient_professional: bool = False,
+                 php_on_monday: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -260,6 +272,7 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         rosanna_iop_php_acu: If True, Rosanna receives IOP, PHP, and Acupuncture services.
         jasmine_inpatient_professional: If True, Jasmine receives inpatient (Detox/Residential)
             and all professional outpatient services.
+        php_on_monday: If True, Partial Hospitalization is treated as billable on Mondays.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -320,7 +333,7 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             continue
 
         # Check if service is non-billable for this day using weekday rules
-        is_non_billable = is_non_billable_service_for_weekday(service, day_of_week)
+        is_non_billable = is_non_billable_service_for_weekday(service, day_of_week, php_on_monday)
 
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
@@ -528,7 +541,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      jasmine_detox_residential_only: bool = False,
                      rosanna_iop_php_acu: bool = False,
                      jasmine_inpatient_professional: bool = False,
-                     exclude_anthem_rosanna_jasmine_owm: bool = False):
+                     exclude_anthem_rosanna_jasmine_owm: bool = False,
+                     php_on_monday: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -553,7 +567,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      rosanna_php_iop_only=rosanna_php_iop_only,
                      jasmine_detox_residential_only=jasmine_detox_residential_only,
                      rosanna_iop_php_acu=rosanna_iop_php_acu,
-                     jasmine_inpatient_professional=jasmine_inpatient_professional)
+                     jasmine_inpatient_professional=jasmine_inpatient_professional,
+                     php_on_monday=php_on_monday)
 
         output_files = {}
 
@@ -743,6 +758,12 @@ exclude_anthem_rosanna_jasmine_owm = st.checkbox(
     help="When checked, rows where the payer contains 'Anthem' will be excluded from Rosanna's and Jasmine's workbooks. Anthem rows are still retained in the Masters report."
 )
 
+php_on_monday = st.checkbox(
+    "Run PHP (Partial Hospitalization) on Mondays",
+    value=False,
+    help="When checked, Partial Hospitalization services will be treated as billable on Mondays instead of being marked 'Unable to Bill'."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
@@ -758,6 +779,7 @@ if uploaded_file is not None:
             rosanna_iop_php_acu=rosanna_iop_php_acu,
             jasmine_inpatient_professional=jasmine_inpatient_professional,
             exclude_anthem_rosanna_jasmine_owm=exclude_anthem_rosanna_jasmine_owm,
+            php_on_monday=php_on_monday,
         )
 
         if wm_count > 0:
