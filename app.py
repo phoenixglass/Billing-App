@@ -257,7 +257,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  rosanna_iop_php_acu: bool = False,
                  jasmine_inpatient_professional: bool = False,
                  php_on_monday: bool = False,
-                 rosanna_iop_jasmine_php: bool = False):
+                 rosanna_iop_jasmine_php: bool = False,
+                 jasmine_iop_professional: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -276,6 +277,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         php_on_monday: If True, Partial Hospitalization is treated as billable on Mondays.
         rosanna_iop_jasmine_php: If True, IOP goes to Rosanna and PHP (Partial Hospitalization)
             goes to Jasmine. Day-of-week rules still apply.
+        jasmine_iop_professional: If True, Jasmine receives IOP and all professional outpatient
+            services. Rosanna does not receive IOP under this option.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -376,6 +379,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             elif rosanna_iop_jasmine_php:
                 if "iop" in service_lower:
                     staff = "Rosanna"
+            elif jasmine_iop_professional:
+                # IOP goes to Jasmine; Rosanna keeps PHP and Acupuncture
+                if ("partial hospitalization" in service_lower or
+                        service_lower.startswith("acupuncture")):
+                    staff = "Rosanna"
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture")):
@@ -403,6 +411,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         if not staff and jasmine_inpatient_professional and (group == "Insurance" or group == ""):
             if ("detox" in service_lower or "residential" in service_lower or
                     is_professional_service(service)):
+                staff = "Jasmine"
+
+        # Jasmine: IOP and all professional services
+        if not staff and jasmine_iop_professional and (group == "Insurance" or group == ""):
+            if "iop" in service_lower or is_professional_service(service):
                 staff = "Jasmine"
 
         # Fill remaining blanks
@@ -551,7 +564,10 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      jasmine_inpatient_professional: bool = False,
                      exclude_anthem_rosanna_jasmine_owm: bool = False,
                      php_on_monday: bool = False,
-                     rosanna_iop_jasmine_php: bool = False):
+                     rosanna_iop_jasmine_php: bool = False,
+                     jasmine_iop_professional: bool = False,
+                     skip_rosanna_report: bool = False,
+                     exclude_detox_residential: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -578,7 +594,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      rosanna_iop_php_acu=rosanna_iop_php_acu,
                      jasmine_inpatient_professional=jasmine_inpatient_professional,
                      php_on_monday=php_on_monday,
-                     rosanna_iop_jasmine_php=rosanna_iop_jasmine_php)
+                     rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
+                     jasmine_iop_professional=jasmine_iop_professional)
 
         output_files = {}
 
@@ -604,6 +621,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                     wm_count += 1
 
         for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
+            if skip_rosanna_report and staff_name == "Rosanna":
+                continue
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
@@ -658,6 +677,10 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                             payer_col is not None):
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_anthem_payer(payer_val):
+                            continue
+                    if exclude_detox_residential and service_col is not None:
+                        service_val = str(ws.cell(row, service_col).value or "").lower()
+                        if "detox" in service_val or "residential" in service_val:
                             continue
                     # Skip WM/OP WM program level rows for all staff except Melissa
                     if (staff_name != "Melissa" and
@@ -780,6 +803,24 @@ rosanna_iop_jasmine_php = st.checkbox(
     help="When checked, IOP services go to Rosanna and PHP (Partial Hospitalization) services go to Jasmine. All day-of-week rules still apply."
 )
 
+jasmine_iop_professional = st.checkbox(
+    "Give Jasmine IOP and all Professional services",
+    value=False,
+    help="When checked, IOP and all professional outpatient services are routed to Jasmine. Rosanna does not receive IOP under this option (she keeps PHP and Acupuncture)."
+)
+
+skip_rosanna_report = st.checkbox(
+    "Don't run a report for Rosanna",
+    value=False,
+    help="When checked, no individual workbook is generated for Rosanna. Her assigned rows still appear in the Masters report."
+)
+
+exclude_detox_residential = st.checkbox(
+    "Don't give anyone Detox or Residential",
+    value=False,
+    help="When checked, Detox and Residential service rows are excluded from all individual staff workbooks. They still appear in the Masters report."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
@@ -797,6 +838,9 @@ if uploaded_file is not None:
             exclude_anthem_rosanna_jasmine_owm=exclude_anthem_rosanna_jasmine_owm,
             php_on_monday=php_on_monday,
             rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
+            jasmine_iop_professional=jasmine_iop_professional,
+            skip_rosanna_report=skip_rosanna_report,
+            exclude_detox_residential=exclude_detox_residential,
         )
 
         if wm_count > 0:
