@@ -277,8 +277,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         php_on_monday: If True, Partial Hospitalization is treated as billable on Mondays.
         rosanna_iop_jasmine_php: If True, IOP goes to Rosanna and PHP (Partial Hospitalization)
             goes to Jasmine. Day-of-week rules still apply.
-        jasmine_iop_professional: If True, Jasmine receives IOP and all professional outpatient
-            services. Rosanna does not receive IOP under this option.
+        jasmine_iop_professional: If True, Jasmine receives IOP, PHP, Acupuncture, and all
+            professional outpatient services. Rosanna does not receive IOP, PHP, or
+            Acupuncture under this option.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -380,10 +381,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                 if "iop" in service_lower:
                     staff = "Rosanna"
             elif jasmine_iop_professional:
-                # IOP goes to Jasmine; Rosanna keeps PHP and Acupuncture
-                if ("partial hospitalization" in service_lower or
-                        service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
+                # IOP, PHP, Acupuncture, and all professional services go to Jasmine
+                pass
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture")):
@@ -413,9 +412,13 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                     is_professional_service(service)):
                 staff = "Jasmine"
 
-        # Jasmine: IOP and all professional services
+        # Jasmine: IOP, PHP, Acupuncture, and all professional services
         if not staff and jasmine_iop_professional and (group == "Insurance" or group == ""):
-            if "iop" in service_lower or is_professional_service(service):
+            if ("iop" in service_lower or
+                    "partial hospitalization" in service_lower or
+                    "php" in service_lower or
+                    service_lower.startswith("acupuncture") or
+                    is_professional_service(service)):
                 staff = "Jasmine"
 
         # Fill remaining blanks
@@ -806,7 +809,7 @@ rosanna_iop_jasmine_php = st.checkbox(
 jasmine_iop_professional = st.checkbox(
     "Give Jasmine IOP and all Professional services",
     value=False,
-    help="When checked, IOP and all professional outpatient services are routed to Jasmine. Rosanna does not receive IOP under this option (she keeps PHP and Acupuncture)."
+    help="When checked, IOP, PHP (Partial Hospitalization), Acupuncture, and all professional outpatient services are routed to Jasmine. Rosanna does not receive IOP, PHP, or Acupuncture under this option."
 )
 
 skip_rosanna_report = st.checkbox(
