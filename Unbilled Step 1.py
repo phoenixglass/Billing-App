@@ -333,16 +333,16 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
         if not staff and group == "Insurance":
             if rosanna_php_iop_only:
                 if ("iop" in service_lower or "partial hospitalization" in service_lower):
-                    staff = "Rosanna"
+                    staff = "Jasmine"
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                     service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
+                    staff = "Jasmine"
             else:
                 if ("iop" in service_lower or
                     service_lower.startswith("acupuncture") or
                     "partial hospitalization" in service_lower):
-                    staff = "Rosanna"
+                    staff = "Jasmine"
 
         # Melissa: (Detox or Residential but NOT Drug Screen) + (Aetna or Humana)
         # CHECK MELISSA BEFORE JASMINE - she's more specific
@@ -363,9 +363,9 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
         # Fill remaining blanks
         if not staff:
             if jasmine_detox_residential_only:
-                staff = "Rosanna"
+                staff = "Jasmine"
             else:
-                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
+                staff = "Jasmine"
 
         ws.cell(row, 1).value = staff
 
