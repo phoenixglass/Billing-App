@@ -303,6 +303,12 @@ def is_non_billable_service_for_weekday(
     # Saturday and Sunday: everything billable (e-care handled above)
     return False
 
+# Rosanna's caseload is currently redirected to Jasmine. The Rosanna routing
+# options are kept intact so they can be re-enabled for future exceptions —
+# clear this mapping to restore Rosanna's own assignments and report.
+STAFF_REDIRECT = {"Rosanna": "Jasmine"}
+
+
 def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  route_iop_acu_to_rosanna: bool = False,
                  rosanna_php_iop_only: bool = False,
@@ -425,26 +431,26 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             if rosanna_iop_php_acu:
                 if ("iop" in service_lower or "partial hospitalization" in service_lower or
                         "php" in service_lower or service_lower.startswith("acupuncture")):
-                    staff = "Jasmine"
+                    staff = "Rosanna"
             elif rosanna_php_iop_only:
                 if ("iop" in service_lower or "partial hospitalization" in service_lower or
                         "php" in service_lower):
-                    staff = "Jasmine"
+                    staff = "Rosanna"
             elif rosanna_iop_jasmine_php:
                 if "iop" in service_lower:
-                    staff = "Jasmine"
+                    staff = "Rosanna"
             elif jasmine_iop_professional:
                 # IOP, PHP, Acupuncture, and all professional services go to Jasmine
                 pass
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture")):
-                    staff = "Jasmine"
+                    staff = "Rosanna"
             else:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture") or
                         "partial hospitalization" in service_lower):
-                    staff = "Jasmine"
+                    staff = "Rosanna"
 
         # Jasmine: (Insurance or blank) + (Detox or Residential), but not drug screens
         # Also receives PHP when rosanna_iop_jasmine_php is enabled
@@ -477,9 +483,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         # Fill remaining blanks
         if not staff:
             if jasmine_detox_residential_only:
-                staff = "Jasmine"
+                staff = "Rosanna"
             else:
-                staff = "Jasmine"
+                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
 
         ws.cell(row, 1).value = staff
 
@@ -687,7 +693,9 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
 
             new_row = 2
             for row in range(2, ws.max_row + 1):
-                if ws.cell(row, 1).value == staff_name:
+                assigned_staff = ws.cell(row, 1).value
+                effective_staff = STAFF_REDIRECT.get(assigned_staff, assigned_staff)
+                if effective_staff == staff_name:
                     # Exclude Optum utox rows from all individual workbooks
                     if (exclude_optum and service_col is not None and
                             payer_col is not None):
@@ -695,7 +703,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                         payer_val = str(ws.cell(row, payer_col).value or "").lower()
                         if is_drug_screen(service_val) and "optum" in payer_val:
                             continue
-                    if (exclude_drug_screens and staff_name == "Rosanna" and
+                    if (exclude_drug_screens and assigned_staff == "Rosanna" and
                             service_col is not None):
                         service_val = str(ws.cell(row, service_col).value or "")
                         if is_drug_screen(service_val):
@@ -706,18 +714,18 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_bcb_anthem_ct_php_res_detox(payer_val, service_val):
                             continue
-                    if (rosanna_php_iop_only and staff_name == "Rosanna" and
+                    if (rosanna_php_iop_only and assigned_staff == "Rosanna" and
                             service_col is not None):
                         service_val = str(ws.cell(row, service_col).value or "").lower()
                         if not ("iop" in service_val or "partial hospitalization" in service_val or "php" in service_val):
                             continue
-                    if (rosanna_iop_php_acu and staff_name == "Rosanna" and
+                    if (rosanna_iop_php_acu and assigned_staff == "Rosanna" and
                             service_col is not None):
                         service_val = str(ws.cell(row, service_col).value or "").lower()
                         if not ("iop" in service_val or "partial hospitalization" in service_val or
                                 "php" in service_val or service_val.startswith("acupuncture")):
                             continue
-                    if (jasmine_detox_residential_only and staff_name == "Jasmine" and
+                    if (jasmine_detox_residential_only and assigned_staff == "Jasmine" and
                             service_col is not None):
                         service_val = str(ws.cell(row, service_col).value or "")
                         service_lower_val = service_val.lower()
@@ -728,7 +736,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                                      is_professional_service(service_val))):
                                 continue
                     if (exclude_anthem_rosanna_jasmine_owm and
-                            staff_name in ("Rosanna", "Jasmine") and
+                            assigned_staff in ("Rosanna", "Jasmine") and
                             payer_col is not None):
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_anthem_payer(payer_val):
@@ -762,6 +770,14 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             output.seek(0)
             output_filename = f"{filename_prefix}{staff_name}.xlsx"
             output_files[output_filename] = output
+
+        # Redirect Rosanna's caseload into Jasmine in the Masters report so it
+        # matches the individual reports. The Rosanna routing options stay
+        # intact for future exceptions.
+        for row in range(2, ws.max_row + 1):
+            assigned_staff = ws.cell(row, 1).value
+            if assigned_staff in STAFF_REDIRECT:
+                ws.cell(row, 1).value = STAFF_REDIRECT[assigned_staff]
 
         main_output = io.BytesIO()
         wb.save(main_output)
