@@ -303,9 +303,9 @@ def is_non_billable_service_for_weekday(
     # Saturday and Sunday: everything billable (e-care handled above)
     return False
 
-# Rosanna's caseload is currently redirected to Jasmine. The Rosanna routing
-# options are kept intact so they can be re-enabled for future exceptions —
-# clear this mapping to restore Rosanna's own assignments and report.
+# Default redirect: Rosanna's caseload folds into Jasmine. This applies unless
+# one of the explicit Rosanna routing options is checked, in which case Rosanna
+# gets her own assignments and report (see process_workbook).
 STAFF_REDIRECT = {"Rosanna": "Jasmine"}
 
 
@@ -681,9 +681,16 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                 if is_wm_program_level(pl):
                     wm_count += 1
 
-        # Only Jasmine and CB receive individual reports. All staff (Melissa,
-        # Rosanna, Unable to Bill, etc.) are still assigned in the Masters report.
-        for staff_name in ["Jasmine", "CB"]:
+        # Rosanna gets her own report when any explicit Rosanna routing option
+        # is checked; otherwise her caseload is redirected to Jasmine and her
+        # report iteration finds no rows (and is skipped).
+        rosanna_gets_report = (route_iop_acu_to_rosanna or rosanna_php_iop_only or
+                               rosanna_iop_php_acu or rosanna_iop_jasmine_php)
+        staff_redirect = {} if rosanna_gets_report else STAFF_REDIRECT
+
+        # Jasmine and CB always get individual reports; Rosanna gets one only
+        # when activated above. Melissa, Unable to Bill, etc. stay Masters-only.
+        for staff_name in ["Rosanna", "Jasmine", "CB"]:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
@@ -694,7 +701,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             new_row = 2
             for row in range(2, ws.max_row + 1):
                 assigned_staff = ws.cell(row, 1).value
-                effective_staff = STAFF_REDIRECT.get(assigned_staff, assigned_staff)
+                effective_staff = staff_redirect.get(assigned_staff, assigned_staff)
                 if effective_staff == staff_name:
                     # Exclude Optum utox rows from all individual workbooks
                     if (exclude_optum and service_col is not None and
@@ -771,13 +778,12 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             output_filename = f"{filename_prefix}{staff_name}.xlsx"
             output_files[output_filename] = output
 
-        # Redirect Rosanna's caseload into Jasmine in the Masters report so it
-        # matches the individual reports. The Rosanna routing options stay
-        # intact for future exceptions.
+        # Mirror the redirect in the Masters report so it matches the individual
+        # reports. When Rosanna has her own report this is a no-op.
         for row in range(2, ws.max_row + 1):
             assigned_staff = ws.cell(row, 1).value
-            if assigned_staff in STAFF_REDIRECT:
-                ws.cell(row, 1).value = STAFF_REDIRECT[assigned_staff]
+            if assigned_staff in staff_redirect:
+                ws.cell(row, 1).value = staff_redirect[assigned_staff]
 
         main_output = io.BytesIO()
         wb.save(main_output)
