@@ -425,26 +425,26 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             if rosanna_iop_php_acu:
                 if ("iop" in service_lower or "partial hospitalization" in service_lower or
                         "php" in service_lower or service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
+                    staff = "Jasmine"
             elif rosanna_php_iop_only:
                 if ("iop" in service_lower or "partial hospitalization" in service_lower or
                         "php" in service_lower):
-                    staff = "Rosanna"
+                    staff = "Jasmine"
             elif rosanna_iop_jasmine_php:
                 if "iop" in service_lower:
-                    staff = "Rosanna"
+                    staff = "Jasmine"
             elif jasmine_iop_professional:
                 # IOP, PHP, Acupuncture, and all professional services go to Jasmine
                 pass
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
+                    staff = "Jasmine"
             else:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture") or
                         "partial hospitalization" in service_lower):
-                    staff = "Rosanna"
+                    staff = "Jasmine"
 
         # Jasmine: (Insurance or blank) + (Detox or Residential), but not drug screens
         # Also receives PHP when rosanna_iop_jasmine_php is enabled
@@ -477,9 +477,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         # Fill remaining blanks
         if not staff:
             if jasmine_detox_residential_only:
-                staff = "Rosanna"
+                staff = "Jasmine"
             else:
-                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
+                staff = "Jasmine"
 
         ws.cell(row, 1).value = staff
 
