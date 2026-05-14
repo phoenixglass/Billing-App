@@ -238,6 +238,12 @@ def is_non_billable_service_for_weekday(
     # Saturday and Sunday: everything billable (e-care handled above)
     return False
 
+# Rosanna's caseload is currently redirected to Jasmine. The Rosanna routing
+# options are kept intact so they can be re-enabled for future exceptions —
+# clear this mapping to restore Rosanna's own assignments and report.
+STAFF_REDIRECT = {"Rosanna": "Jasmine"}
+
+
 def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = False,
                  rosanna_php_iop_only: bool = False,
                  jasmine_detox_residential_only: bool = False):
@@ -333,16 +339,16 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
         if not staff and group == "Insurance":
             if rosanna_php_iop_only:
                 if ("iop" in service_lower or "partial hospitalization" in service_lower):
-                    staff = "Jasmine"
+                    staff = "Rosanna"
             elif route_iop_acu_to_rosanna:
                 if ("iop" in service_lower or
                     service_lower.startswith("acupuncture")):
-                    staff = "Jasmine"
+                    staff = "Rosanna"
             else:
                 if ("iop" in service_lower or
                     service_lower.startswith("acupuncture") or
                     "partial hospitalization" in service_lower):
-                    staff = "Jasmine"
+                    staff = "Rosanna"
 
         # Melissa: (Detox or Residential but NOT Drug Screen) + (Aetna or Humana)
         # CHECK MELISSA BEFORE JASMINE - she's more specific
@@ -363,9 +369,9 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
         # Fill remaining blanks
         if not staff:
             if jasmine_detox_residential_only:
-                staff = "Jasmine"
+                staff = "Rosanna"
             else:
-                staff = "Jasmine"
+                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
 
         ws.cell(row, 1).value = staff
 
@@ -443,7 +449,9 @@ def export_staff_workbooks(wb, wb_path, date_token):
         # Copy matching rows
         new_row = 2
         for row in range(2, ws.max_row + 1):
-            if ws.cell(row, 1).value == staff_name:
+            assigned_staff = ws.cell(row, 1).value
+            effective_staff = STAFF_REDIRECT.get(assigned_staff, assigned_staff)
+            if effective_staff == staff_name:
                 # Skip WM program level rows for all staff except Melissa
                 # (Masters retains all rows; only Melissa bills WM)
                 if (staff_name != "Melissa" and
@@ -488,16 +496,25 @@ def main(workbook_path):
 
     # Step 2-6: Assign staff
     assign_staff(ws, date_token)
-    
-    # Save main workbook
-    wb.save(workbook_path)
-    print(f"Saved main workbook: {workbook_path}")
-    
+
     # Step 7: Export individual workbooks (only if date_token is available)
+    # Runs before the redirect so the Rosanna routing options stay effective.
     if date_token:
         export_staff_workbooks(wb, workbook_path, date_token)
     else:
         print("Skipping individual workbook export due to missing date token")
+
+    # Redirect Rosanna's caseload into Jasmine in the Masters report so it
+    # matches the individual reports. The Rosanna routing options stay intact
+    # for future exceptions.
+    for row in range(2, ws.max_row + 1):
+        assigned_staff = ws.cell(row, 1).value
+        if assigned_staff in STAFF_REDIRECT:
+            ws.cell(row, 1).value = STAFF_REDIRECT[assigned_staff]
+
+    # Save main workbook
+    wb.save(workbook_path)
+    print(f"Saved main workbook: {workbook_path}")
     
     print("\n✓ All done!")
 
