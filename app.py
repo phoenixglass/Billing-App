@@ -486,7 +486,7 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
     print("Staff assignment complete")
 
 
-def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_screen_statuses: bool = True):
+def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_screen_statuses: bool = True, include_batch_billings: bool = False):
     """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
 
     Args:
@@ -494,6 +494,7 @@ def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_scree
         exclude_drug_screens: When True, omit 'Utox Batch' from dropdown (Rosanna only).
         include_drug_screen_statuses: When False, omit both 'Utox Batch' and 'Inclusive
             Services' from the dropdown. Used for Jasmine when give_utox_to_jasmine is False.
+        include_batch_billings: When True, add 'Batch Billings' to the dropdown (Jasmine only).
     """
     ws = wb.active
 
@@ -510,22 +511,21 @@ def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_scree
 
     # Create Sheet2 with validation list
     ws_list = wb.create_sheet("Sheet2")
-    ws_list['A1'] = "Billed"
-    ws_list['A2'] = "Unable to Bill"
-    ws_list['A3'] = "Contractual Adj"
-    ws_list['A4'] = "Incomplete Billings"
-    if not include_drug_screen_statuses:
-        # Jasmine without utox: no drug-screen-related status items
-        list_range = "=Sheet2!$A$1:$A$4"
-    elif exclude_drug_screens:
-        # Rosanna with drug screens excluded: keep Inclusive Services but drop Utox Batch
-        ws_list['A5'] = "Inclusive Services"
-        list_range = "=Sheet2!$A$1:$A$5"
-    else:
-        # Rosanna (default) or Jasmine with utox: full dropdown
-        ws_list['A5'] = "Utox Batch"
-        ws_list['A6'] = "Inclusive Services"
-        list_range = "=Sheet2!$A$1:$A$6"
+    status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings"]
+    if include_drug_screen_statuses:
+        if exclude_drug_screens:
+            # Rosanna with drug screens excluded: keep Inclusive Services but drop Utox Batch
+            status_items.append("Inclusive Services")
+        else:
+            # Rosanna (default) or Jasmine with utox: full dropdown
+            status_items.append("Utox Batch")
+            status_items.append("Inclusive Services")
+    if include_batch_billings:
+        status_items.append("Batch Billings")
+
+    for idx, item in enumerate(status_items, start=1):
+        ws_list[f'A{idx}'] = item
+    list_range = f"=Sheet2!$A$1:$A${len(status_items)}"
 
     # Add data validation to Status column
     dv = DataValidation(type="list", formula1=list_range, allow_blank=True)
@@ -754,7 +754,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             elif staff_name == "Jasmine":
                 # Jasmine only gets "Utox Batch" / "Inclusive Services" when
                 # the "Give utox to Jasmine" checkbox is checked.
-                finalize_workbook(new_wb, include_drug_screen_statuses=give_utox_to_jasmine)
+                finalize_workbook(new_wb, include_drug_screen_statuses=give_utox_to_jasmine,
+                                  include_batch_billings=True)
 
             output = io.BytesIO()
             new_wb.save(output)
