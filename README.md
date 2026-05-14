@@ -12,13 +12,31 @@ An automated billing processor for unbilled revenue reports.
 
 ## Weekday-Based Non-Billable Rules
 
-The system now uses the date extracted from the filename (MMDDYYYY format) to determine weekday-based billing rules:
+The system uses the date extracted from the filename (MMDDYYYY format) to determine weekday-based billing rules.
 
-- **Tuesday**: Everything is billed (including e-care)
-- **Monday**: Non-billable services: Partial Hospitalization, Residential, Detox, and e-care
-- **Wednesday-Sunday**: All services billed except e-care
+Services fall into two categories:
 
-**E-care variants**: The system recognizes 'e-care', 'e care', and 'ecare' (case-insensitive).
+- **Programming**: Detox, Residential, Partial Hospitalization (PHP)
+- **Professional**: all other services (including IOP and Acupuncture)
+
+Weekly billing schedule:
+
+- **Monday**: Professional only (Programming non-billable)
+- **Tuesday**: Programming only (Professional non-billable)
+- **Wednesday**: Professional only (Programming non-billable)
+- **Thursday**: Programming + Professional
+- **Friday**: Programming + Professional
+- **Saturday/Sunday**: All services billed except e-care
+
+**E-care**: billable on Tuesdays only. The system recognizes 'e-care', 'e care', 'ecare', and 'extended care' (case-insensitive).
+
+The "Run PHP on Mondays" option exempts Partial Hospitalization from the Monday restriction.
+
+## Reports
+
+Individual workbooks are generated for **Jasmine** and **CB** only. All other staff
+(Melissa, Rosanna, etc.) are still assigned in the Masters workbook but do not
+receive separate reports.
 
 ### Fallback Behavior
 

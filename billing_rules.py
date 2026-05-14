@@ -5,13 +5,23 @@ Helper functions to:
 
 Weekday mapping: 0=Monday, 1=Tuesday, ..., 6=Sunday
 
-Rules implemented:
-- Tuesday (1): everything billed (including e-care).
-- Monday (0): non-billable: partial hospitalization, residential, detox, and e-care.
-  - php_on_monday=True exempts partial hospitalization from the Monday restriction.
-- Wednesday-Friday (2,3,4): all services billed except e-care.
+Weekly billing schedule:
+- Monday (0):    Professional only        (Programming non-billable)
+- Tuesday (1):   Programming only         (Professional non-billable)
+- Wednesday (2): Professional only        (Programming non-billable)
+- Thursday (3):  Programming + Professional
+- Friday (4):    Programming + Professional
+- Saturday/Sunday (5,6): all services billable except e-care
+
+Service categories:
+- Programming: Detox, Residential, Partial Hospitalization (PHP)
+- Professional: all other services (including IOP and Acupuncture)
+
+E-care notes:
 - e-care is billable only on Tuesdays (non-billable on other days).
-- Matches e-care variants: "e-care", "e care", "ecare" (case-insensitive).
+- Matches e-care variants: "e-care", "e care", "ecare", "extended care" (case-insensitive).
+
+php_on_monday=True exempts Partial Hospitalization from the Monday restriction.
 """
 from datetime import datetime
 from typing import Tuple
@@ -38,6 +48,17 @@ def _is_ecare(service: str) -> bool:
     return any(token in s for token in ("e-care", "e care", "ecare", "extended care"))
 
 
+def _is_programming_service(service: str) -> bool:
+    """Return True for Programming services: Detox, Residential, Partial Hospitalization (PHP)."""
+    s = service.lower()
+    return (
+        "detox" in s
+        or "residential" in s
+        or "partial hospitalization" in s
+        or "php" in s
+    )
+
+
 def is_non_billable_service_for_weekday(
     service: str, weekday: int, php_on_monday: bool = False
 ) -> bool:
@@ -47,7 +68,7 @@ def is_non_billable_service_for_weekday(
 
     - service: original service string (case-insensitive checks will be used)
     - weekday: 0=Monday .. 6=Sunday
-    - php_on_monday: when True, partial hospitalization is billable on Mondays
+    - php_on_monday: when True, Partial Hospitalization is billable on Mondays
     """
     s = (service or "").lower().strip()
 
@@ -55,17 +76,26 @@ def is_non_billable_service_for_weekday(
     if _is_ecare(s):
         return weekday != 1  # non-billable unless Tuesday
 
-    # Monday: exclude residential, detox, and (unless php_on_monday) partial hospitalization
-    if weekday == 0:
-        if "residential" in s or "detox" in s:
-            return True
-        if "partial hospitalization" in s and not php_on_monday:
-            return True
-        return False
+    is_programming = _is_programming_service(s)
 
-    # Tuesday: everything billable (already covered e-care above)
+    # Monday and Wednesday: Professional only (Programming non-billable)
+    if weekday in (0, 2):
+        if not is_programming:
+            return False
+        # php_on_monday exempts Partial Hospitalization on Mondays
+        if weekday == 0 and php_on_monday and (
+            "partial hospitalization" in s or "php" in s
+        ):
+            return False
+        return True
+
+    # Tuesday: Programming only (Professional non-billable)
     if weekday == 1:
+        return not is_programming
+
+    # Thursday and Friday: Programming + Professional both billable
+    if weekday in (3, 4):
         return False
 
-    # Wed-Fri and weekends: only e-care is non-billable (handled above)
+    # Saturday and Sunday: everything billable (e-care already handled above)
     return False

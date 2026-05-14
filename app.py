@@ -104,49 +104,71 @@ def _is_ecare(service: str) -> bool:
     s = service.lower()
     return any(variant in s for variant in ['e-care', 'e care', 'ecare', 'extended care'])
 
+def _is_programming_service(service: str) -> bool:
+    """Check if service is a Programming service: Detox, Residential, or PHP."""
+    s = service.lower()
+    return (
+        'detox' in s
+        or 'residential' in s
+        or 'partial hospitalization' in s
+        or 'php' in s
+    )
+
 def is_non_billable_service_for_weekday(
     service: str, weekday: int, php_on_monday: bool = False
 ) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
 
-    Weekday rules:
-    - Tuesday (1): Everything billable (including e-care)
-    - Monday (0): Non-billable: partial hospitalization, residential, detox, e-care
-      - php_on_monday=True exempts partial hospitalization from the Monday restriction
-    - Wednesday-Friday (2,3,4): All services billable except e-care
-    - Saturday-Sunday (5,6): e-care non-billable (treat like Wed-Fri)
+    Weekly billing schedule:
+    - Monday (0):    Professional only        (Programming non-billable)
+    - Tuesday (1):   Programming only         (Professional non-billable)
+    - Wednesday (2): Professional only        (Programming non-billable)
+    - Thursday (3):  Programming + Professional
+    - Friday (4):    Programming + Professional
+    - Saturday/Sunday (5,6): all services billable except e-care
 
-    E-care is only billable on Tuesdays.
+    Service categories:
+    - Programming: Detox, Residential, Partial Hospitalization (PHP)
+    - Professional: all other services (including IOP and Acupuncture)
+
+    E-care is billable on Tuesdays only.
 
     Args:
         service: Service name (case-insensitive matching)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-        php_on_monday: When True, partial hospitalization is billable on Mondays
+        php_on_monday: When True, Partial Hospitalization is billable on Mondays
 
     Returns:
         True if service is non-billable for the given weekday
     """
     service_lower = service.lower()
 
-    # Tuesday: everything billable
+    # e-care is billable on Tuesdays only
+    if _is_ecare(service_lower):
+        return weekday != 1
+
+    is_programming = _is_programming_service(service_lower)
+
+    # Monday and Wednesday: Professional only
+    if weekday in (0, 2):
+        if not is_programming:
+            return False
+        if weekday == 0 and php_on_monday and (
+            'partial hospitalization' in service_lower or 'php' in service_lower
+        ):
+            return False
+        return True
+
+    # Tuesday: Programming only
     if weekday == 1:
+        return not is_programming
+
+    # Thursday and Friday: Programming + Professional both billable
+    if weekday in (3, 4):
         return False
 
-    # Monday: non-billable services
-    if weekday == 0:
-        if _is_ecare(service_lower):
-            return True
-        if 'residential' in service_lower or 'detox' in service_lower:
-            return True
-        if 'partial hospitalization' in service_lower and not php_on_monday:
-            return True
-        return False
-
-    # Wednesday-Sunday (2,3,4,5,6): e-care non-billable
-    if weekday in [2, 3, 4, 5, 6]:
-        return _is_ecare(service_lower)
-
+    # Saturday and Sunday: everything billable (e-care handled above)
     return False
 
 def get_filename_prefix(filename):
@@ -214,41 +236,72 @@ def _is_ecare(service: str) -> bool:
     s = service.lower()
     return any(variant in s for variant in ["e-care", "e care", "ecare", "extended care"])
 
+def _is_programming_service(service: str) -> bool:
+    """Check if service is a Programming service: Detox, Residential, or PHP."""
+    s = service.lower()
+    return (
+        "detox" in s
+        or "residential" in s
+        or "partial hospitalization" in s
+        or "php" in s
+    )
+
 def is_non_billable_service_for_weekday(
     service: str, weekday: int, php_on_monday: bool = False
 ) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
 
-    Weekday rules:
-    - Tuesday (1): all services billed (including e-care)
-    - Monday (0): non-billable: partial hospitalization, residential, detox, e-care
-      - php_on_monday=True exempts partial hospitalization from the Monday restriction
-    - Wednesday-Friday (2,3,4): bill all services except e-care
-    - Saturday-Sunday (5,6): bill all services except e-care
+    Weekly billing schedule:
+    - Monday (0):    Professional only        (Programming non-billable)
+    - Tuesday (1):   Programming only         (Professional non-billable)
+    - Wednesday (2): Professional only        (Programming non-billable)
+    - Thursday (3):  Programming + Professional
+    - Friday (4):    Programming + Professional
+    - Saturday/Sunday (5,6): all services billable except e-care
+
+    Service categories:
+    - Programming: Detox, Residential, Partial Hospitalization (PHP)
+    - Professional: all other services (including IOP and Acupuncture)
+
+    E-care is billable on Tuesdays only.
 
     Args:
         service: Service name (case-insensitive)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-        php_on_monday: When True, partial hospitalization is billable on Mondays
+        php_on_monday: When True, Partial Hospitalization is billable on Mondays
 
     Returns:
         True if service is non-billable for this weekday
     """
     service_lower = service.lower()
 
-    if weekday == 1:  # Tuesday - bill all services
+    # e-care is billable on Tuesdays only
+    if _is_ecare(service_lower):
+        return weekday != 1
+
+    is_programming = _is_programming_service(service_lower)
+
+    # Monday and Wednesday: Professional only
+    if weekday in (0, 2):
+        if not is_programming:
+            return False
+        if weekday == 0 and php_on_monday and (
+            "partial hospitalization" in service_lower or "php" in service_lower
+        ):
+            return False
+        return True
+
+    # Tuesday: Programming only
+    if weekday == 1:
+        return not is_programming
+
+    # Thursday and Friday: Programming + Professional both billable
+    if weekday in (3, 4):
         return False
-    elif weekday == 0:  # Monday - multiple non-billable services
-        if _is_ecare(service_lower):
-            return True
-        if "residential" in service_lower or "detox" in service_lower:
-            return True
-        if "partial hospitalization" in service_lower and not php_on_monday:
-            return True
-        return False
-    else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
-        return _is_ecare(service_lower)
+
+    # Saturday and Sunday: everything billable (e-care handled above)
+    return False
 
 def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  route_iop_acu_to_rosanna: bool = False,
@@ -569,7 +622,6 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      php_on_monday: bool = False,
                      rosanna_iop_jasmine_php: bool = False,
                      jasmine_iop_professional: bool = False,
-                     skip_rosanna_report: bool = False,
                      exclude_detox_residential: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
@@ -623,9 +675,9 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                 if is_wm_program_level(pl):
                     wm_count += 1
 
-        for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
-            if skip_rosanna_report and staff_name == "Rosanna":
-                continue
+        # Only Jasmine and CB receive individual reports. All staff (Melissa,
+        # Rosanna, Unable to Bill, etc.) are still assigned in the Masters report.
+        for staff_name in ["Jasmine", "CB"]:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
@@ -812,12 +864,6 @@ jasmine_iop_professional = st.checkbox(
     help="When checked, IOP, PHP (Partial Hospitalization), Acupuncture, and all professional outpatient services are routed to Jasmine. Rosanna does not receive IOP, PHP, or Acupuncture under this option."
 )
 
-skip_rosanna_report = st.checkbox(
-    "Don't run a report for Rosanna",
-    value=False,
-    help="When checked, no individual workbook is generated for Rosanna. Her assigned rows still appear in the Masters report."
-)
-
 exclude_detox_residential = st.checkbox(
     "Don't give anyone Detox or Residential",
     value=False,
@@ -842,14 +888,13 @@ if uploaded_file is not None:
             php_on_monday=php_on_monday,
             rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
             jasmine_iop_professional=jasmine_iop_professional,
-            skip_rosanna_report=skip_rosanna_report,
             exclude_detox_residential=exclude_detox_residential,
         )
 
         if wm_count > 0:
             st.warning(
                 f"⚠️ Alert: {wm_count} row(s) with 'WM' or 'OP WM' in the Program Level column were found. "
-                "These rows are only included in Masters and Melissa's report. "
+                "These rows are assigned to Melissa and appear only in the Masters report. "
                 "Only Melissa is authorized to bill WM."
             )
 
