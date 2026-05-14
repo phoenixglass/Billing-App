@@ -23,43 +23,71 @@ def _is_ecare(service: str) -> bool:
     s = service.lower()
     return any(variant in s for variant in ['e-care', 'e care', 'ecare', 'extended care'])
 
-def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
+def _is_programming_service(service: str) -> bool:
+    """Check if service is a Programming service: Detox, Residential, or PHP."""
+    s = service.lower()
+    return (
+        'detox' in s
+        or 'residential' in s
+        or 'partial hospitalization' in s
+        or 'php' in s
+    )
+
+def is_non_billable_service_for_weekday(
+    service: str, weekday: int, php_on_monday: bool = False
+) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
-    
-    Weekday rules:
-    - Tuesday (1): Everything billable (including e-care)
-    - Monday (0): Non-billable: partial hospitalization, residential, detox, e-care
-    - Wednesday-Friday (2,3,4): All services billable except e-care
-    - Saturday-Sunday (5,6): e-care non-billable (treat like Wed-Fri)
-    
-    E-care is only billable on Tuesdays.
-    
+
+    Weekly billing schedule:
+    - Monday (0):    Professional only        (Programming non-billable)
+    - Tuesday (1):   Programming only         (Professional non-billable)
+    - Wednesday (2): Professional only        (Programming non-billable)
+    - Thursday (3):  Programming + Professional
+    - Friday (4):    Programming + Professional
+    - Saturday/Sunday (5,6): all services billable except e-care
+
+    Service categories:
+    - Programming: Detox, Residential, Partial Hospitalization (PHP)
+    - Professional: all other services (including IOP and Acupuncture)
+
+    E-care is billable on Tuesdays only.
+
     Args:
         service: Service name (case-insensitive matching)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-    
+        php_on_monday: When True, Partial Hospitalization is billable on Mondays
+
     Returns:
         True if service is non-billable for the given weekday
     """
     service_lower = service.lower()
-    
-    # Tuesday: everything billable
+
+    # e-care is billable on Tuesdays only
+    if _is_ecare(service_lower):
+        return weekday != 1
+
+    is_programming = _is_programming_service(service_lower)
+
+    # Monday and Wednesday: Professional only
+    if weekday in (0, 2):
+        if not is_programming:
+            return False
+        if weekday == 0 and php_on_monday and (
+            'partial hospitalization' in service_lower or 'php' in service_lower
+        ):
+            return False
+        return True
+
+    # Tuesday: Programming only
     if weekday == 1:
+        return not is_programming
+
+    # Thursday and Friday: Programming + Professional both billable
+    if weekday in (3, 4):
         return False
-    
-    # Monday: non-billable services
-    if weekday == 0:
-        if _is_ecare(service_lower):
-            return True
-        if any(s in service_lower for s in ['partial hospitalization', 'residential', 'detox']):
-            return True
-        return False
-    
-    # Wednesday-Sunday (2,3,4,5,6): e-care non-billable
-    if weekday in [2, 3, 4, 5, 6]:
-        return _is_ecare(service_lower)
-    
+
+    # Saturday and Sunday: everything billable (e-care handled above)
     return False
 
 def is_wm_program_level(cell_value) -> bool:
@@ -153,36 +181,62 @@ def _is_ecare(service: str) -> bool:
     s = service.lower()
     return any(variant in s for variant in ["e-care", "e care", "ecare", "extended care"])
 
-def is_non_billable_service_for_weekday(service: str, weekday: int) -> bool:
+def is_non_billable_service_for_weekday(
+    service: str, weekday: int, php_on_monday: bool = False
+) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
-    
-    Weekday rules:
-    - Tuesday (1): all services billed (including e-care)
-    - Monday (0): non-billable: partial hospitalization, residential, detox, e-care
-    - Wednesday-Friday (2,3,4): bill all services except e-care
-    - Saturday-Sunday (5,6): bill all services except e-care
-    
+
+    Weekly billing schedule:
+    - Monday (0):    Professional only        (Programming non-billable)
+    - Tuesday (1):   Programming only         (Professional non-billable)
+    - Wednesday (2): Professional only        (Programming non-billable)
+    - Thursday (3):  Programming + Professional
+    - Friday (4):    Programming + Professional
+    - Saturday/Sunday (5,6): all services billable except e-care
+
+    Service categories:
+    - Programming: Detox, Residential, Partial Hospitalization (PHP)
+    - Professional: all other services (including IOP and Acupuncture)
+
+    E-care is billable on Tuesdays only.
+
     Args:
         service: Service name (case-insensitive)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-    
+        php_on_monday: When True, Partial Hospitalization is billable on Mondays
+
     Returns:
         True if service is non-billable for this weekday
     """
     service_lower = service.lower()
-    
-    if weekday == 1:  # Tuesday - bill all services
+
+    # e-care is billable on Tuesdays only
+    if _is_ecare(service_lower):
+        return weekday != 1
+
+    is_programming = _is_programming_service(service_lower)
+
+    # Monday and Wednesday: Professional only
+    if weekday in (0, 2):
+        if not is_programming:
+            return False
+        if weekday == 0 and php_on_monday and (
+            "partial hospitalization" in service_lower or "php" in service_lower
+        ):
+            return False
+        return True
+
+    # Tuesday: Programming only
+    if weekday == 1:
+        return not is_programming
+
+    # Thursday and Friday: Programming + Professional both billable
+    if weekday in (3, 4):
         return False
-    elif weekday == 0:  # Monday - multiple non-billable services
-        return (
-            "partial hospitalization" in service_lower or
-            "residential" in service_lower or
-            "detox" in service_lower or
-            _is_ecare(service_lower)
-        )
-    else:  # Wednesday-Sunday (2,3,4,5,6) - only e-care non-billable
-        return _is_ecare(service_lower)
+
+    # Saturday and Sunday: everything billable (e-care handled above)
+    return False
 
 def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = False,
                  rosanna_php_iop_only: bool = False,
@@ -347,7 +401,11 @@ def finalize_workbook(wb):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
 def export_staff_workbooks(wb, wb_path, date_token):
-    """Export separate workbooks for Rosanna, Jasmine, CB, Melissa, Unable to Bill"""
+    """Export separate workbooks for Jasmine and CB only.
+
+    All staff (Melissa, Rosanna, Unable to Bill, etc.) are still assigned in the
+    Masters workbook, but only Jasmine and the CB team receive individual reports.
+    """
 
     ws = wb.active
     save_folder = get_save_folder(wb_path, date_token)
@@ -368,11 +426,11 @@ def export_staff_workbooks(wb, wb_path, date_token):
     if wm_count > 0:
         print(
             f"WARNING: {wm_count} row(s) with 'WM' in the Program Level column were found. "
-            "These rows are only included in Masters and Melissa's report. "
+            "These rows are assigned to Melissa and appear only in the Masters report. "
             "Only Melissa is authorized to bill WM."
         )
 
-    for staff_name in ["Rosanna", "Jasmine", "CB", "Melissa", "Unable to Bill"]:
+    for staff_name in ["Jasmine", "CB"]:
         # Create new workbook
         new_wb = openpyxl.Workbook()
         new_ws = new_wb.active
