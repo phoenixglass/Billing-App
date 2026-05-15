@@ -540,9 +540,23 @@ def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_scree
     last_row = ws.max_row
     dv.add(f'E2:E{last_row}')
 
-    # Widen columns to fit all text
+    # Widen columns to fit all text. openpyxl's auto_size flag is unreliable in
+    # Excel, so compute an explicit width from the longest value in each column.
     for col in range(1, ws.max_column + 1):
-        ws.column_dimensions[get_column_letter(col)].auto_size = True
+        max_length = 0
+        for row in range(1, ws.max_row + 1):
+            value = ws.cell(row, col).value
+            if value is None:
+                continue
+            length = len(str(value))
+            if length > max_length:
+                max_length = length
+        # Add a small padding and cap the width so a single huge cell doesn't
+        # blow out the layout.
+        ws.column_dimensions[get_column_letter(col)].width = min(max_length + 2, 60)
+
+    # Enable filtering on the header row.
+    ws.auto_filter.ref = ws.dimensions
 
 def validate_uploaded_file(uploaded_file):
     """Validate uploaded file for security."""
@@ -759,6 +773,10 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                         continue
                     for col in range(1, ws.max_column + 1):
                         new_ws.cell(new_row, col).value = ws.cell(row, col).value
+                    # Overwrite the staff column so redirected rows show the
+                    # owning staff name (e.g. Rosanna rows folded into Jasmine
+                    # should read "Jasmine" in Jasmine's individual report).
+                    new_ws.cell(new_row, 1).value = staff_name
                     new_row += 1
 
             if new_row == 2:
