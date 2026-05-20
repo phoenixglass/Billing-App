@@ -317,7 +317,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  jasmine_inpatient_professional: bool = False,
                  php_on_monday: bool = False,
                  rosanna_iop_jasmine_php: bool = False,
-                 jasmine_iop_professional: bool = False):
+                 jasmine_iop_professional: bool = False,
+                 jasmine_detox_residential_php: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -339,6 +340,10 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         jasmine_iop_professional: If True, Jasmine receives IOP, PHP, Acupuncture, and all
             professional outpatient services. Rosanna does not receive IOP, PHP, or
             Acupuncture under this option.
+        jasmine_detox_residential_php: If True, Detox, Residential, and PHP (Partial
+            Hospitalization) are treated as billable on every weekday and routed to
+            Jasmine. Jasmine receives only these three services; all other services
+            default to Rosanna.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -401,6 +406,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         # Check if service is non-billable for this day using weekday rules
         is_non_billable = is_non_billable_service_for_weekday(service, day_of_week, php_on_monday)
 
+        # When the Jasmine D/R/PHP option is active, Detox, Residential, and PHP
+        # are billable on every weekday so they can be routed to Jasmine.
+        if jasmine_detox_residential_php and _is_programming_service(service):
+            is_non_billable = False
+
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
             billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
@@ -446,6 +456,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture")):
                     staff = "Rosanna"
+            elif jasmine_detox_residential_php:
+                # PHP goes to Jasmine; IOP and Acupuncture still go to Rosanna
+                if ("iop" in service_lower or
+                        service_lower.startswith("acupuncture")):
+                    staff = "Rosanna"
             else:
                 if ("iop" in service_lower or
                         service_lower.startswith("acupuncture") or
@@ -457,7 +472,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         if not staff and (group == "Insurance" or group == ""):
             is_detox_res = ("detox" in service_lower or service_lower.startswith("residential"))
             is_php = ("partial hospitalization" in service_lower or "php" in service_lower)
-            if ((is_detox_res or (rosanna_iop_jasmine_php and is_php)) and
+            if ((is_detox_res or
+                    (rosanna_iop_jasmine_php and is_php) or
+                    (jasmine_detox_residential_php and is_php)) and
                     not is_drug_screen(service)):
                 staff = "Jasmine"
 
@@ -482,7 +499,7 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         # Fill remaining blanks
         if not staff:
-            if jasmine_detox_residential_only:
+            if jasmine_detox_residential_only or jasmine_detox_residential_php:
                 staff = "Rosanna"
             else:
                 staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
@@ -642,7 +659,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      php_on_monday: bool = False,
                      rosanna_iop_jasmine_php: bool = False,
                      jasmine_iop_professional: bool = False,
-                     exclude_detox_residential: bool = False):
+                     exclude_detox_residential: bool = False,
+                     jasmine_detox_residential_php: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -670,7 +688,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      jasmine_inpatient_professional=jasmine_inpatient_professional,
                      php_on_monday=php_on_monday,
                      rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
-                     jasmine_iop_professional=jasmine_iop_professional)
+                     jasmine_iop_professional=jasmine_iop_professional,
+                     jasmine_detox_residential_php=jasmine_detox_residential_php)
 
         output_files = {}
 
@@ -756,6 +775,15 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                                      "residential" in service_lower_val or
                                      is_professional_service(service_val))):
                                 continue
+                    # Jasmine's report is limited to Detox/Residential/PHP. This
+                    # matches on staff_name (not assigned_staff) so that rows
+                    # redirected into Jasmine from Rosanna are dropped too.
+                    if (jasmine_detox_residential_php and staff_name == "Jasmine" and
+                            service_col is not None):
+                        service_val = str(ws.cell(row, service_col).value or "").lower()
+                        if not ("detox" in service_val or "residential" in service_val or
+                                "partial hospitalization" in service_val or "php" in service_val):
+                            continue
                     if (exclude_anthem_rosanna_jasmine_owm and
                             assigned_staff in ("Rosanna", "Jasmine") and
                             payer_col is not None):
@@ -911,6 +939,12 @@ exclude_detox_residential = st.checkbox(
     help="When checked, Detox and Residential service rows are excluded from all individual staff workbooks. They still appear in the Masters report."
 )
 
+jasmine_detox_residential_php = st.checkbox(
+    "Give Jasmine only Detox, Residential, and PHP",
+    value=False,
+    help="When checked, Detox, Residential, and PHP (Partial Hospitalization) are treated as billable on every weekday and routed to Jasmine. Jasmine's report is limited to just these three services. Rosanna does not receive a separate report unless one of her own options is checked; all other services stay in the Masters report only."
+)
+
 if uploaded_file is not None:
     try:
         st.info("Processing your file...")
@@ -930,6 +964,7 @@ if uploaded_file is not None:
             rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
             jasmine_iop_professional=jasmine_iop_professional,
             exclude_detox_residential=exclude_detox_residential,
+            jasmine_detox_residential_php=jasmine_detox_residential_php,
         )
 
         if wm_count > 0:
