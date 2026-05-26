@@ -410,6 +410,22 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         if jasmine_detox_residential_php and _is_programming_service(service):
             is_non_billable = False
 
+        # When "Give Jasmine IOP and all professional services" is active,
+        # IOP, PHP, Acupuncture, and professional services are billable on every
+        # weekday so they can be routed to Jasmine.
+        if jasmine_iop_professional and (group == "Insurance" or group == ""):
+            if ("iop" in service_lower or
+                    "partial hospitalization" in service_lower or
+                    "php" in service_lower or
+                    service_lower.startswith("acupuncture") or
+                    is_professional_service(service)):
+                is_non_billable = False
+
+        # When "Give utox to Jasmine" is active, drug screens are billable on
+        # every weekday so they can be routed to Jasmine.
+        if give_utox_to_jasmine and (group == "Insurance" or group == "") and is_drug_screen(service):
+            is_non_billable = False
+
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if 'billing_provider' in cols and 'group_fld1' in cols:
             billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
