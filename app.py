@@ -206,29 +206,28 @@ def step_1_extract_invalid(ws):
         if ws.cell(row, billable_col).value == "Invalid for Billing":
             invalid_rows.append(row)
 
-    if not invalid_rows:
-        return None
+    if invalid_rows:
+        wb = ws.parent
+        if "Invalid" in wb.sheetnames:
+            del wb["Invalid"]
 
-    wb = ws.parent
-    if "Invalid" in wb.sheetnames:
-        del wb["Invalid"]
+        ws_invalid = wb.create_sheet("Invalid")
 
-    ws_invalid = wb.create_sheet("Invalid")
+        for col in range(1, ws.max_column + 1):
+            ws_invalid.cell(1, col).value = ws.cell(1, col).value
+
+        for idx, row_num in enumerate(invalid_rows, start=2):
+            for col in range(1, ws.max_column + 1):
+                ws_invalid.cell(idx, col).value = ws.cell(row_num, col).value
+
+        for row_num in reversed(invalid_rows):
+            ws.delete_rows(row_num)
 
     for col in range(1, ws.max_column + 1):
-        ws_invalid.cell(1, col).value = ws.cell(1, col).value
-
-    for idx, row_num in enumerate(invalid_rows, start=2):
-        for col in range(1, ws.max_column + 1):
-            ws_invalid.cell(idx, col).value = ws.cell(row_num, col).value
-
-    for row_num in reversed(invalid_rows):
-        ws.delete_rows(row_num)
-
-    ws.cell(1, 1).font = openpyxl.styles.Font(bold=True)
+        ws.cell(1, col).font = openpyxl.styles.Font(bold=True)
     ws.auto_filter.ref = ws.dimensions
 
-    return len(invalid_rows)
+    return len(invalid_rows) if invalid_rows else 0
 
 def _is_ecare(service: str) -> bool:
     """Check if service is e-care (handles common variants)"""
