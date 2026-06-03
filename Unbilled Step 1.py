@@ -23,14 +23,22 @@ def _is_ecare(service: str) -> bool:
     s = service.lower()
     return any(variant in s for variant in ['e-care', 'e care', 'ecare', 'extended care'])
 
+DRUG_SCREEN_KEYWORDS = ("drug screen", "utox", "urine tox", "drug test", "uds")
+
+def is_drug_screen(service: str) -> bool:
+    """Return True if the service is a drug screen."""
+    s = service.lower()
+    return any(kw in s for kw in DRUG_SCREEN_KEYWORDS)
+
 def _is_programming_service(service: str) -> bool:
-    """Check if service is a Programming service: Detox, Residential, or PHP."""
+    """Check if service is a Programming service: Detox, Residential, PHP, or IOP."""
     s = service.lower()
     return (
         'detox' in s
         or 'residential' in s
         or 'partial hospitalization' in s
         or 'php' in s
+        or 'iop' in s
     )
 
 def is_non_billable_service_for_weekday(
@@ -40,16 +48,17 @@ def is_non_billable_service_for_weekday(
     Determine if a service is non-billable for a given weekday.
 
     Weekly billing schedule:
-    - Monday (0):    Professional only        (Programming non-billable)
-    - Tuesday (1):   Programming only         (Professional non-billable)
-    - Wednesday (2): Professional only        (Programming non-billable)
-    - Thursday (3):  Programming + Professional
-    - Friday (4):    Programming + Professional
+    - Monday (0):    Professional + Utox     (Programming + e-care non-billable)
+    - Tuesday (1):   E-care + Programming    (Professional + Utox non-billable)
+    - Wednesday (2): Professional + Utox     (Programming + e-care non-billable)
+    - Thursday (3):  Programming + Professional + Utox (e-care non-billable)
+    - Friday (4):    Programming + Professional + Utox (e-care non-billable)
     - Saturday/Sunday (5,6): all services billable except e-care
 
     Service categories:
-    - Programming: Detox, Residential, Partial Hospitalization (PHP)
-    - Professional: all other services (including IOP and Acupuncture)
+    - Programming: Detox, Residential, Partial Hospitalization (PHP), IOP
+    - Professional: all other services (including Acupuncture)
+    - Utox: drug screen services
 
     E-care is billable on Tuesdays only.
 
@@ -67,9 +76,14 @@ def is_non_billable_service_for_weekday(
     if _is_ecare(service_lower):
         return weekday != 1
 
+    # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
+    # and weekends; non-billable only on Tuesday.
+    if is_drug_screen(service):
+        return weekday == 1
+
     is_programming = _is_programming_service(service_lower)
 
-    # Monday and Wednesday: Professional only
+    # Monday and Wednesday: Professional + Utox only (Programming non-billable)
     if weekday in (0, 2):
         if not is_programming:
             return False
@@ -79,11 +93,11 @@ def is_non_billable_service_for_weekday(
             return False
         return True
 
-    # Tuesday: Programming only
+    # Tuesday: E-care + Programming only (Professional + Utox non-billable)
     if weekday == 1:
         return not is_programming
 
-    # Thursday and Friday: Programming + Professional both billable
+    # Thursday and Friday: Programming + Professional + Utox all billable
     if weekday in (3, 4):
         return False
 
@@ -188,16 +202,17 @@ def is_non_billable_service_for_weekday(
     Determine if a service is non-billable for a given weekday.
 
     Weekly billing schedule:
-    - Monday (0):    Professional only        (Programming non-billable)
-    - Tuesday (1):   Programming only         (Professional non-billable)
-    - Wednesday (2): Professional only        (Programming non-billable)
-    - Thursday (3):  Programming + Professional
-    - Friday (4):    Programming + Professional
+    - Monday (0):    Professional + Utox     (Programming + e-care non-billable)
+    - Tuesday (1):   E-care + Programming    (Professional + Utox non-billable)
+    - Wednesday (2): Professional + Utox     (Programming + e-care non-billable)
+    - Thursday (3):  Programming + Professional + Utox (e-care non-billable)
+    - Friday (4):    Programming + Professional + Utox (e-care non-billable)
     - Saturday/Sunday (5,6): all services billable except e-care
 
     Service categories:
-    - Programming: Detox, Residential, Partial Hospitalization (PHP)
-    - Professional: all other services (including IOP and Acupuncture)
+    - Programming: Detox, Residential, Partial Hospitalization (PHP), IOP
+    - Professional: all other services (including Acupuncture)
+    - Utox: drug screen services
 
     E-care is billable on Tuesdays only.
 
@@ -215,9 +230,14 @@ def is_non_billable_service_for_weekday(
     if _is_ecare(service_lower):
         return weekday != 1
 
+    # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
+    # and weekends; non-billable only on Tuesday.
+    if is_drug_screen(service):
+        return weekday == 1
+
     is_programming = _is_programming_service(service_lower)
 
-    # Monday and Wednesday: Professional only
+    # Monday and Wednesday: Professional + Utox only (Programming non-billable)
     if weekday in (0, 2):
         if not is_programming:
             return False
@@ -227,11 +247,11 @@ def is_non_billable_service_for_weekday(
             return False
         return True
 
-    # Tuesday: Programming only
+    # Tuesday: E-care + Programming only (Professional + Utox non-billable)
     if weekday == 1:
         return not is_programming
 
-    # Thursday and Friday: Programming + Professional both billable
+    # Thursday and Friday: Programming + Professional + Utox all billable
     if weekday in (3, 4):
         return False
 
