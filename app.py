@@ -14,22 +14,97 @@ import secrets
 import logging
 from pathlib import Path
 
+try:
+    from google.cloud import storage
+    from google.oauth2 import service_account
+    GCS_AVAILABLE = True
+except ImportError:
+    GCS_AVAILABLE = False
+
 # Configure audit logging
 LOG_DIR = Path("audit_logs")
 LOG_DIR.mkdir(exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_DIR / f"audit_{datetime.now().strftime('%Y%m%d')}.log"),
-        logging.StreamHandler()
-    ]
-)
+
+def setup_logging():
+    """Setup logging with GCS support if credentials are available."""
+    handlers = []
+    gcs_handler = None
+
+    # Try to setup GCS logging (for Streamlit Cloud)
+    if GCS_AVAILABLE and "gcp_service_account" in st.secrets:
+        try:
+            creds_json = st.secrets["gcp_service_account"]
+            if isinstance(creds_json, str):
+                creds_dict = json.loads(creds_json)
+            else:
+                creds_dict = dict(creds_json)
+
+            credentials = service_account.Credentials.from_service_account_info(creds_dict)
+            gcs_client = storage.Client(credentials=credentials)
+            bucket_name = st.secrets.get("gcs_bucket_name", "billing-app-audit-logs")
+            bucket = gcs_client.bucket(bucket_name)
+
+            # Verify bucket exists
+            if bucket.exists():
+                gcs_handler = GCSHandler(gcs_client, bucket_name)
+                handlers.append(gcs_handler)
+            else:
+                print(f"WARNING: GCS bucket '{bucket_name}' not found. Using local logging only.")
+        except Exception as e:
+            print(f"WARNING: Failed to setup GCS logging: {e}. Using local logging only.")
+
+    # Always add local logging handler for development/fallback
+    log_file = LOG_DIR / f"audit_{datetime.now().strftime('%Y%m%d')}.log"
+    handlers.append(logging.FileHandler(log_file))
+
+    # Add console handler
+    handlers.append(logging.StreamHandler())
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=handlers,
+        force=True
+    )
+
+    # Security: Enforce restrictive permissions on audit logs (owner read/write only)
+    for log_file in LOG_DIR.glob("audit_*.log"):
+        os.chmod(log_file, 0o600)
+
+    return gcs_handler
+
+class GCSHandler(logging.Handler):
+    """Custom logging handler that writes to Google Cloud Storage."""
+
+    def __init__(self, gcs_client, bucket_name):
+        super().__init__()
+        self.gcs_client = gcs_client
+        self.bucket_name = bucket_name
+        self.bucket = gcs_client.bucket(bucket_name)
+
+    def emit(self, record):
+        """Write log record to GCS."""
+        try:
+            log_entry = self.format(record) + "\n"
+            log_date = datetime.now().strftime('%Y%m%d')
+            blob_name = f"audit_logs/audit_{log_date}.log"
+
+            blob = self.bucket.blob(blob_name)
+
+            # Append to existing log
+            if blob.exists():
+                existing = blob.download_as_string().decode('utf-8')
+                blob.upload_from_string(existing + log_entry)
+            else:
+                blob.upload_from_string(log_entry)
+        except Exception as e:
+            self.handleError(record)
+
+gcs_handler = setup_logging()
 logger = logging.getLogger(__name__)
 
-# Security: Enforce restrictive permissions on audit logs (owner read/write only)
-for log_file in LOG_DIR.glob("audit_*.log"):
-    os.chmod(log_file, 0o600)
+if gcs_handler:
+    logger.info("✓ GCS logging enabled")
 
 st.set_page_config(page_title="Unbilled Billing App", layout="wide")
 
