@@ -5,10 +5,14 @@ This application includes the following security controls for handling Protected
 ## Authentication & Authorization
 
 ### Password Protection
-- Simple password authentication required to access the application
-- Default credentials: username='admin', password='billing2026'
-- **⚠️ IMPORTANT**: Change default password before production use
-- Password is hashed using SHA-256 (not stored in plain text)
+- Per-user username + password authentication required to access the application
+- **No default/built-in credentials.** The app refuses to authenticate unless the
+  `BILLING_APP_CREDENTIALS` environment variable is configured (see below).
+- Passwords are verified against salted **PBKDF2-HMAC-SHA256** hashes
+  (600,000 iterations), compared in constant time. The plaintext password is
+  never stored.
+- Brute-force protection: after 5 failed attempts the account is locked out for
+  15 minutes.
 
 ### Session Management
 - **Automatic timeout**: 15 minutes of inactivity
@@ -103,24 +107,33 @@ Additional requirements for HIPAA compliance:
 - No intrusion detection/prevention
 - No data loss prevention (DLP)
 
-## Changing the Default Password
+## Configuring Credentials
 
-To change the default password:
+The app reads accounts from the `BILLING_APP_CREDENTIALS` environment variable,
+which must contain a JSON object mapping each username to a PBKDF2 hash. There
+are no built-in accounts.
 
-1. Generate a new password hash:
+1. Generate a hash for each user (run from the project directory):
 ```python
-import hashlib
-new_password = "your_secure_password_here"
-hash_value = hashlib.sha256(new_password.encode()).hexdigest()
-print(hash_value)
+from app import hash_password
+print(hash_password("a_strong_unique_password"))
 ```
 
-2. Replace the `correct_hash` value in `app.py` line ~42:
-```python
-correct_hash = "your_new_hash_here"
+2. Build the credentials JSON, e.g.:
+```json
+{"jasmine": "pbkdf2_sha256$600000$<salt>$<hash>", "cb": "pbkdf2_sha256$600000$<salt>$<hash>"}
 ```
 
-3. Update the login page caption to remove default credentials display
+3. Set it in the environment before launching (do NOT hardcode it in source or
+   commit it). For example:
+```bash
+export BILLING_APP_CREDENTIALS='{"jasmine":"pbkdf2_sha256$..."}'
+streamlit run app.py
+```
+
+Store this value in a secret manager or a `.env` file that is excluded from git
+(`.env` is already in `.gitignore`). Use a unique account per person so the audit
+log attributes actions correctly.
 
 ## Security Contact
 
