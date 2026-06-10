@@ -27,6 +27,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Security: Enforce restrictive permissions on audit logs (owner read/write only)
+for log_file in LOG_DIR.glob("audit_*.log"):
+    os.chmod(log_file, 0o600)
+
 st.set_page_config(page_title="Unbilled Billing App", layout="wide")
 
 # Security: Session timeout (15 minutes of inactivity)
