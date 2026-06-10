@@ -419,6 +419,10 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         # Check if service is non-billable for this day using weekday rules
         is_non_billable = is_non_billable_service_for_weekday(service, day_of_week, php_on_monday)
 
+        # Self-Pay (CB): IOP is always billable every day regardless of weekday rules.
+        if group == "Self Pay" and "iop" in service_lower:
+            is_non_billable = False
+
         # When the Jasmine D/R/PHP option is active, Detox, Residential, and PHP
         # are billable on every weekday so they can be routed to Jasmine.
         if jasmine_detox_residential_php and _is_programming_service(service):
