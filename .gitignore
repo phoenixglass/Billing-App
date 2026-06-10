@@ -38,3 +38,15 @@ ENV/
 
 # Audit logs
 audit_logs/
+
+# PHI / patient data — NEVER commit spreadsheets, reports, or screenshots of them
+*.xlsx
+*.xls
+*.csv
+Unbilled Reports/
+DPR Example.png
+
+# Local secrets / credentials
+.env
+*.env
+secrets.json
