@@ -595,18 +595,6 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         staff = None
 
-        # If split_professional_utox is enabled, use pre-computed assignment for those rows
-        if split_professional_utox and row in split_assignment:
-            staff = split_assignment[row]
-            ws.cell(row, 1).value = staff
-            continue
-
-        # All IOP goes to Jasmine when split_professional_utox is enabled
-        if split_professional_utox and "iop" in service_lower:
-            staff = "Jasmine"
-            ws.cell(row, 1).value = staff
-            continue
-
         # WM / OP WM Program Level → Melissa
         if 'program_level' in cols:
             pl_value = ws.cell(row, cols['program_level']).value
@@ -657,6 +645,14 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         # Unable to Bill: Non-billable service for this day of week
         if not staff and is_non_billable:
             staff = "Unable to Bill"
+
+        # split_professional_utox: Professional and Utox services sorted by Client
+        # First 300 to Rosanna, rest to Jasmine. All IOP goes to Jasmine.
+        if not staff and split_professional_utox:
+            if row in split_assignment:
+                staff = split_assignment[row]
+            elif "iop" in service_lower:
+                staff = "Jasmine"
 
         # Melissa: (Detox or Residential) + (Aetna or Humana), but not drug screens
         if not staff:
