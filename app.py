@@ -1054,6 +1054,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                 # the "Give utox to Jasmine" checkbox is checked.
                 finalize_workbook(new_wb, include_drug_screen_statuses=give_utox_to_jasmine,
                                   include_batch_billings=True)
+            elif staff_name == "CB":
+                finalize_workbook(new_wb)
 
             output = io.BytesIO()
             new_wb.save(output)
