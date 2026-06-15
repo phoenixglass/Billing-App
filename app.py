@@ -601,8 +601,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             ws.cell(row, 1).value = staff
             continue
 
-        # All IOP goes to Jasmine when split_professional_utox is enabled
-        if split_professional_utox and "iop" in service_lower:
+        # All IOP goes to Jasmine when split_professional_utox is enabled, except for Self-Pay IOP (CB)
+        if split_professional_utox and "iop" in service_lower and group != "Self Pay":
             staff = "Jasmine"
             ws.cell(row, 1).value = staff
             continue
