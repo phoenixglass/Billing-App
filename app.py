@@ -487,7 +487,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  php_on_monday: bool = False,
                  rosanna_iop_jasmine_php: bool = False,
                  jasmine_iop_professional: bool = False,
-                 jasmine_detox_residential_php: bool = False):
+                 jasmine_detox_residential_php: bool = False,
+                 split_professional_utox: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -513,6 +514,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             Hospitalization) are treated as billable on every weekday and routed to
             Jasmine. Jasmine receives only these three services; all other services
             default to Rosanna.
+        split_professional_utox: If True, Professional and Utox services are sorted by
+            Client (column C) alphabetically. First 300 rows go to Rosanna, remaining go
+            to Jasmine. All IOP goes to Jasmine.
     """
     
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -531,9 +535,38 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             cols['billing_provider'] = col
         elif header == "Program Level":
             cols['program_level'] = col
+        elif header == "Client":
+            cols['client'] = col
 
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
+
+    # Pre-process for split_professional_utox: collect, sort, and assign split
+    split_assignment = {}
+    if split_professional_utox:
+        professional_utox_rows = []
+        for row in range(2, ws.max_row + 1):
+            service = str(ws.cell(row, cols['service']).value or "")
+            service_lower = service.lower()
+
+            # Collect Professional services (not IOP, not programming, not drug screens already handled)
+            is_professional = is_professional_service(service)
+            is_utox = is_drug_screen(service)
+            is_iop = "iop" in service_lower
+
+            if (is_professional or is_utox) and not is_iop:
+                client = str(ws.cell(row, cols.get('client', 3)).value or "").strip()
+                professional_utox_rows.append((row, client, service_lower))
+
+        # Sort by client (column C), alphabetically
+        professional_utox_rows.sort(key=lambda x: x[1].lower())
+
+        # First 300 to Rosanna, rest to Jasmine
+        for idx, (row, client, _) in enumerate(professional_utox_rows):
+            if idx < 300:
+                split_assignment[row] = "Rosanna"
+            else:
+                split_assignment[row] = "Jasmine"
     
     # Determine weekday from date_token or fall back to current date
     if date_token:
@@ -561,6 +594,18 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
 
         staff = None
+
+        # If split_professional_utox is enabled, use pre-computed assignment for those rows
+        if split_professional_utox and row in split_assignment:
+            staff = split_assignment[row]
+            ws.cell(row, 1).value = staff
+            continue
+
+        # All IOP goes to Jasmine when split_professional_utox is enabled
+        if split_professional_utox and "iop" in service_lower:
+            staff = "Jasmine"
+            ws.cell(row, 1).value = staff
+            continue
 
         # WM / OP WM Program Level → Melissa
         if 'program_level' in cols:
@@ -849,7 +894,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      rosanna_iop_jasmine_php: bool = False,
                      jasmine_iop_professional: bool = False,
                      exclude_detox_residential: bool = False,
-                     jasmine_detox_residential_php: bool = False):
+                     jasmine_detox_residential_php: bool = False,
+                     split_professional_utox: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -878,7 +924,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      php_on_monday=php_on_monday,
                      rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
                      jasmine_iop_professional=jasmine_iop_professional,
-                     jasmine_detox_residential_php=jasmine_detox_residential_php)
+                     jasmine_detox_residential_php=jasmine_detox_residential_php,
+                     split_professional_utox=split_professional_utox)
 
         output_files = {}
 
@@ -907,7 +954,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
         # is checked; otherwise her caseload is redirected to Jasmine and her
         # report iteration finds no rows (and is skipped).
         rosanna_gets_report = (route_iop_acu_to_rosanna or rosanna_php_iop_only or
-                               rosanna_iop_php_acu or rosanna_iop_jasmine_php)
+                               rosanna_iop_php_acu or rosanna_iop_jasmine_php or
+                               split_professional_utox)
         staff_redirect = {} if rosanna_gets_report else STAFF_REDIRECT
 
         # Jasmine and CB always get individual reports; Rosanna gets one only
@@ -1134,6 +1182,12 @@ jasmine_detox_residential_php = st.checkbox(
     help="When checked, Detox, Residential, and PHP (Partial Hospitalization) are treated as billable on every weekday and routed to Jasmine. Jasmine's report is limited to just these three services. Rosanna does not receive a separate report unless one of her own options is checked; all other services stay in the Masters report only."
 )
 
+split_professional_utox = st.checkbox(
+    "Give Rosanna first 300 Professional/Utox (sorted by Client), Jasmine gets rest + all IOP",
+    value=False,
+    help="When checked, all Professional and Utox services are sorted by Client (column C) A-Z. First 300 rows go to Rosanna, remaining go to Jasmine. All IOP goes to Jasmine. Creates separate reports for both."
+)
+
 if uploaded_file is not None:
     try:
         validate_uploaded_file(uploaded_file)
@@ -1155,6 +1209,7 @@ if uploaded_file is not None:
             jasmine_iop_professional=jasmine_iop_professional,
             exclude_detox_residential=exclude_detox_residential,
             jasmine_detox_residential_php=jasmine_detox_residential_php,
+            split_professional_utox=split_professional_utox,
         )
 
         if wm_count > 0:
