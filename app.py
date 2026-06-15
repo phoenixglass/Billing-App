@@ -548,13 +548,15 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         for row in range(2, ws.max_row + 1):
             service = str(ws.cell(row, cols['service']).value or "")
             service_lower = service.lower()
+            group = str(ws.cell(row, cols['group']).value or "").strip()
 
             # Collect Professional services (not IOP, not programming, not drug screens already handled)
+            # Exclude Self Pay (CB) rows from the split
             is_professional = is_professional_service(service)
             is_utox = is_drug_screen(service)
             is_iop = "iop" in service_lower
 
-            if (is_professional or is_utox) and not is_iop:
+            if (is_professional or is_utox) and not is_iop and group != "Self Pay":
                 client = str(ws.cell(row, cols.get('client', 3)).value or "").strip()
                 professional_utox_rows.append((row, client, service_lower))
 
