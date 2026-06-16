@@ -880,26 +880,31 @@ def is_op_wm_program_level(cell_value) -> bool:
 def is_cb_billable_service(service: str) -> bool:
     """Return True if service is billable every day for CB (self pay).
 
-    Billable CB services:
-    - IOP
-    - Group therapy
-    - Individual therapy
-    - Family therapy
-    - Medication admin
-    - MATS
-    - Psych eval
-    - Psych follow up
+    All the following services are billable every day for CB (Self Pay):
+    - Telemed: Outpatient Group, Assessment/Diag, Crisis Psychotherapy, Family Sessions, IOP, etc.
+    - Admin/Injection Add On
+    - Family Sessions (with/without client)
+    - IOP (all locations: Adolescent, Canaan, Chappaqua, Huntington, NYC, Ramsey, Scholarship, Wilton)
+    - Medication Admin/Injection services
+    - OP: Psych Appointments (all durations)
+    - Outpatient services (all durations, including EMDR variants)
+    - Outpatient Family Therapy and Group sessions
+    - Psychiatric Diag. Eval. W. Med Services
     """
     s = service.lower()
     cb_keywords = (
+        "telemed: outpatient group",
+        "admin/injection add on",
+        "assessment/diag (bps) w/o med services",
+        "crisis psychotherapy",
+        "family session",
         "iop",
-        "group",
-        "individual",
-        "family",
-        "medication admin",
-        "mats",
-        "psych eval",
-        "psych follow",
+        "medication admin/injection",
+        "OP: psych",
+        "op: psych",
+        "outpatient",
+        "outpaitent",
+        "psychiatric diag",
     )
     return any(keyword in s for keyword in cb_keywords)
 
