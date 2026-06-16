@@ -644,8 +644,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         # Check if service is non-billable for this day using weekday rules
         is_non_billable = is_non_billable_service_for_weekday(service, day_of_week, php_on_monday)
 
-        # Self-Pay (CB): IOP is always billable every day regardless of weekday rules.
-        if group == "Self Pay" and "iop" in service_lower:
+        # Self-Pay (CB): Specific services are always billable every day regardless of weekday rules.
+        if group == "Self Pay" and is_cb_billable_service(service):
             is_non_billable = False
 
         # When the Jasmine D/R/PHP option is active, Detox, Residential, and PHP
@@ -876,6 +876,33 @@ def is_wm_program_level(cell_value) -> bool:
 def is_op_wm_program_level(cell_value) -> bool:
     """Return True if the Program Level cell contains 'OP WM'."""
     return "OP WM" in str(cell_value or "").upper()
+
+def is_cb_billable_service(service: str) -> bool:
+    """Return True if service is billable every day for CB (self pay).
+
+    Billable CB services:
+    - IOP
+    - Group therapy
+    - Individual therapy
+    - Family therapy
+    - Medication admin
+    - MATS
+    - Psych eval
+    - Psych follow up
+    """
+    s = service.lower()
+    cb_keywords = (
+        "iop",
+        "group",
+        "individual",
+        "family",
+        "medication admin",
+        "mats",
+        "psych eval",
+        "psych follow",
+    )
+    return any(keyword in s for keyword in cb_keywords)
+
 
 def is_anthem_payer(payer: str) -> bool:
     """Return True if the payer contains 'anthem'."""
