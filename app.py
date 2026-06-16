@@ -545,7 +545,14 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
     split_assignment = {}
     if split_professional_utox:
         professional_utox_rows = []
+        other_rows = []
+        row_data_map = {}
+
+        # Collect all row data and identify professional/utox rows
         for row in range(2, ws.max_row + 1):
+            row_data = [ws.cell(row, col).value for col in range(1, ws.max_column + 1)]
+            row_data_map[row] = row_data
+
             service = str(ws.cell(row, cols['service']).value or "")
             service_lower = service.lower()
             group = str(ws.cell(row, cols['group']).value or "").strip()
@@ -559,16 +566,31 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             if (is_professional or is_utox) and not is_iop and group != "Self Pay":
                 client = str(ws.cell(row, cols.get('client', 3)).value or "").strip()
                 professional_utox_rows.append((row, client, service_lower))
+            else:
+                other_rows.append(row)
 
-        # Sort by client (column C), alphabetically
+        # Sort professional/utox rows by client (column C), alphabetically
         professional_utox_rows.sort(key=lambda x: x[1].lower())
 
-        # First 300 to Rosanna, rest to Jasmine
-        for idx, (row, client, _) in enumerate(professional_utox_rows):
+        # Reorder worksheet: sorted professional/utox first, then other rows
+        new_row_pos = 2
+        for original_row, _, _ in professional_utox_rows:
+            for col in range(1, ws.max_column + 1):
+                ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
+            new_row_pos += 1
+
+        for original_row in other_rows:
+            for col in range(1, ws.max_column + 1):
+                ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
+            new_row_pos += 1
+
+        # Assign staff: first 300 (sorted) to Rosanna, rest to Jasmine
+        for idx in range(len(professional_utox_rows)):
+            new_row_pos = idx + 2
             if idx < 300:
-                split_assignment[row] = "Rosanna"
+                split_assignment[new_row_pos] = "Rosanna"
             else:
-                split_assignment[row] = "Jasmine"
+                split_assignment[new_row_pos] = "Jasmine"
     
     # Determine weekday from date_token or fall back to current date
     if date_token:
