@@ -1158,8 +1158,13 @@ st.info("🔒 All actions are logged. Session timeout: 15 minutes of inactivity.
 
 uploaded_file = st.file_uploader(
     "Choose an Excel file (must have MMDDYYYY in filename)",
-    type="xlsx"
+    type="xlsx",
+    key="billing_file_uploader"
 )
+
+# Preserve uploaded file in session state to prevent it from disappearing on reruns
+if uploaded_file is not None:
+    st.session_state["current_uploaded_file"] = uploaded_file
 
 exclude_drug_screens = st.checkbox(
     "Exclude drug screens from Rosanna's report",
