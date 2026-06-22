@@ -585,9 +585,10 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             new_row_pos += 1
 
         # Assign staff: first 300 (sorted) to Rosanna, rest to Jasmine
+        num_rosanna_rows = min(300, len(professional_utox_rows))
         for idx in range(len(professional_utox_rows)):
             new_row_pos = idx + 2
-            if idx < 300:
+            if idx < num_rosanna_rows:
                 split_assignment[new_row_pos] = "Rosanna"
             else:
                 split_assignment[new_row_pos] = "Jasmine"
@@ -683,11 +684,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             staff = "Unable to Bill"
 
         # split_professional_utox: Professional and Utox services sorted by Client
-        # First 300 to Rosanna, rest to Jasmine. All IOP goes to Jasmine.
+        # First 300 to Rosanna, rest to Jasmine. All IOP (except Self Pay) goes to Jasmine.
         if not staff and split_professional_utox:
             if row in split_assignment:
                 staff = split_assignment[row]
-            elif "iop" in service_lower:
+            elif "iop" in service_lower and group != "Self Pay":
                 staff = "Jasmine"
 
         # Melissa: (Detox or Residential) + (Aetna or Humana), but not drug screens
@@ -775,7 +776,7 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
     print("Staff assignment complete")
 
 
-def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_screen_statuses: bool = True, include_batch_billings: bool = False):
+def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_screen_statuses: bool = True, include_batch_billings: bool = False, skip_status_columns: bool = False):
     """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
 
     Args:
@@ -784,6 +785,7 @@ def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_scree
         include_drug_screen_statuses: When False, omit both 'Utox Batch' and 'Inclusive
             Services' from the dropdown. Used for Jasmine when give_utox_to_jasmine is False.
         include_batch_billings: When True, add 'Batch Billings' to the dropdown (Jasmine only).
+        skip_status_columns: When True, skip adding Status/Comments columns (for CB/self-pay).
     """
     ws = wb.active
 
@@ -791,37 +793,38 @@ def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_scree
     for col in range(1, ws.max_column + 1):
         ws.cell(1, col).font = openpyxl.styles.Font(bold=True)
 
-    # Insert two columns at E
-    ws.insert_cols(5, 2)
-    ws.cell(1, 5).value = "Status"
-    ws.cell(1, 6).value = "Comments"
-    ws.cell(1, 5).font = openpyxl.styles.Font(bold=True)
-    ws.cell(1, 6).font = openpyxl.styles.Font(bold=True)
+    # Insert two columns at E (unless skipped for CB/self-pay)
+    if not skip_status_columns:
+        ws.insert_cols(5, 2)
+        ws.cell(1, 5).value = "Status"
+        ws.cell(1, 6).value = "Comments"
+        ws.cell(1, 5).font = openpyxl.styles.Font(bold=True)
+        ws.cell(1, 6).font = openpyxl.styles.Font(bold=True)
 
-    # Create Sheet2 with validation list
-    ws_list = wb.create_sheet("Sheet2")
-    status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings"]
-    if include_drug_screen_statuses:
-        if exclude_drug_screens:
-            # Rosanna with drug screens excluded: keep Inclusive Services but drop Utox Batch
-            status_items.append("Inclusive Services")
-        else:
-            # Rosanna (default) or Jasmine with utox: full dropdown
-            status_items.append("Utox Batch")
-            status_items.append("Inclusive Services")
-    if include_batch_billings:
-        status_items.append("Batch Billings")
+        # Create Sheet2 with validation list
+        ws_list = wb.create_sheet("Sheet2")
+        status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings"]
+        if include_drug_screen_statuses:
+            if exclude_drug_screens:
+                # Rosanna with drug screens excluded: keep Inclusive Services but drop Utox Batch
+                status_items.append("Inclusive Services")
+            else:
+                # Rosanna (default) or Jasmine with utox: full dropdown
+                status_items.append("Utox Batch")
+                status_items.append("Inclusive Services")
+        if include_batch_billings:
+            status_items.append("Batch Billings")
 
-    for idx, item in enumerate(status_items, start=1):
-        ws_list[f'A{idx}'] = item
-    list_range = f"=Sheet2!$A$1:$A${len(status_items)}"
+        for idx, item in enumerate(status_items, start=1):
+            ws_list[f'A{idx}'] = item
+        list_range = f"=Sheet2!$A$1:$A${len(status_items)}"
 
-    # Add data validation to Status column
-    dv = DataValidation(type="list", formula1=list_range, allow_blank=True)
-    ws.add_data_validation(dv)
+        # Add data validation to Status column
+        dv = DataValidation(type="list", formula1=list_range, allow_blank=True)
+        ws.add_data_validation(dv)
 
-    last_row = ws.max_row
-    dv.add(f'E2:E{last_row}')
+        last_row = ws.max_row
+        dv.add(f'E2:E{last_row}')
 
     # Widen columns to fit all text. openpyxl's auto_size flag is unreliable in
     # Excel, so compute an explicit width from the longest value in each column.
@@ -1119,7 +1122,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                 finalize_workbook(new_wb, include_drug_screen_statuses=give_utox_to_jasmine,
                                   include_batch_billings=True)
             elif staff_name == "CB":
-                finalize_workbook(new_wb)
+                finalize_workbook(new_wb, skip_status_columns=True)
 
             output = io.BytesIO()
             new_wb.save(output)
