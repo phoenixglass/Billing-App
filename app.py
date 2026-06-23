@@ -649,6 +649,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         if group == "Self Pay" and is_cb_billable_service(service):
             is_non_billable = False
 
+        # Self-Pay (CB): Any service in an OP (Outpatient) program is always billable.
+        if group == "Self Pay" and 'group_fld1' in cols:
+            group_fld1_val = str(ws.cell(row, cols['group_fld1']).value or "").strip()
+            if group_fld1_val.upper().startswith("OP"):
+                is_non_billable = False
+
         # When the Jasmine D/R/PHP option is active, Detox, Residential, and PHP
         # are billable on every weekday so they can be routed to Jasmine.
         if jasmine_detox_residential_php and _is_programming_service(service):
