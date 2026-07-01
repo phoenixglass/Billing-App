@@ -488,7 +488,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                  rosanna_iop_jasmine_php: bool = False,
                  jasmine_iop_professional: bool = False,
                  jasmine_detox_residential_php: bool = False,
-                 split_professional_utox: bool = False):
+                 split_professional_utox: bool = False,
+                 split_professional_utox_150: bool = False):
     """Assign staff names based on business rules
 
     Args:
@@ -516,9 +517,12 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             default to Rosanna.
         split_professional_utox: If True, Professional and Utox services are sorted by
             Client (column C) alphabetically. First 300 rows go to Rosanna, remaining go
-            to Jasmine. All IOP goes to Jasmine.
+            to Jasmine. All IOP goes to Jasmine. Rosanna receives no other rows.
+        split_professional_utox_150: Same as split_professional_utox, but Rosanna only
+            receives the first 150 rows instead of 300. Mutually exclusive with
+            split_professional_utox; if both are set, the 150 limit takes precedence.
     """
-    
+
     # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
     for col in range(1, ws.max_column + 1):
@@ -541,9 +545,14 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
     if not all(k in cols for k in ['group', 'service', 'payer']):
         raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
 
-    # Pre-process for split_professional_utox: collect, sort, and assign split
+    # split_professional_utox and split_professional_utox_150 share the same
+    # sort/limit behavior and only differ in the row cap given to Rosanna.
+    split_limit = 150 if split_professional_utox_150 else (300 if split_professional_utox else None)
+    split_mode_active = split_limit is not None
+
+    # Pre-process for split mode: collect, sort, and assign split
     split_assignment = {}
-    if split_professional_utox:
+    if split_mode_active:
         professional_utox_rows = []
         other_rows = []
         row_data_map = {}
@@ -584,8 +593,8 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
                 ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
             new_row_pos += 1
 
-        # Assign staff: first 300 (sorted) to Rosanna, rest to Jasmine
-        num_rosanna_rows = min(300, len(professional_utox_rows))
+        # Assign staff: first `split_limit` (sorted) to Rosanna, rest to Jasmine
+        num_rosanna_rows = min(split_limit, len(professional_utox_rows))
         for idx in range(len(professional_utox_rows)):
             new_row_pos = idx + 2
             if idx < num_rosanna_rows:
@@ -620,14 +629,14 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         staff = None
 
-        # If split_professional_utox is enabled, use pre-computed assignment for those rows
-        if split_professional_utox and row in split_assignment:
+        # If split mode is enabled, use pre-computed assignment for those rows
+        if split_mode_active and row in split_assignment:
             staff = split_assignment[row]
             ws.cell(row, 1).value = staff
             continue
 
-        # All IOP goes to Jasmine when split_professional_utox is enabled, except for Self-Pay IOP (CB)
-        if split_professional_utox and "iop" in service_lower and group != "Self Pay":
+        # All IOP goes to Jasmine when split mode is enabled, except for Self-Pay IOP (CB)
+        if split_mode_active and "iop" in service_lower and group != "Self Pay":
             staff = "Jasmine"
             ws.cell(row, 1).value = staff
             continue
@@ -689,14 +698,6 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
         if not staff and is_non_billable:
             staff = "Unable to Bill"
 
-        # split_professional_utox: Professional and Utox services sorted by Client
-        # First 300 to Rosanna, rest to Jasmine. All IOP (except Self Pay) goes to Jasmine.
-        if not staff and split_professional_utox:
-            if row in split_assignment:
-                staff = split_assignment[row]
-            elif "iop" in service_lower and group != "Self Pay":
-                staff = "Jasmine"
-
         # Melissa: (Detox or Residential) + (Aetna or Humana), but not drug screens
         if not staff:
             has_detox_res = ("detox" in service_lower or "residential" in service_lower)
@@ -710,7 +711,9 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             staff = "CB"
 
         # Rosanna: Insurance + services based on active option
-        if not staff and group == "Insurance":
+        # Skipped entirely in split mode: Rosanna should only ever receive the
+        # pre-computed first-N split_assignment rows, nothing else.
+        if not staff and group == "Insurance" and not split_mode_active:
             if rosanna_iop_php_acu:
                 if ("iop" in service_lower or "partial hospitalization" in service_lower or
                         "php" in service_lower or service_lower.startswith("acupuncture")):
@@ -772,7 +775,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         # Fill remaining blanks
         if not staff:
-            if jasmine_detox_residential_only or jasmine_detox_residential_php:
+            if split_mode_active:
+                # In split mode, Rosanna only gets the pre-computed first-N
+                # rows; everything else defaults to Jasmine.
+                staff = "Jasmine"
+            elif jasmine_detox_residential_only or jasmine_detox_residential_php:
                 staff = "Rosanna"
             else:
                 staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
@@ -968,7 +975,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      jasmine_iop_professional: bool = False,
                      exclude_detox_residential: bool = False,
                      jasmine_detox_residential_php: bool = False,
-                     split_professional_utox: bool = False):
+                     split_professional_utox: bool = False,
+                     split_professional_utox_150: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -998,7 +1006,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                      rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
                      jasmine_iop_professional=jasmine_iop_professional,
                      jasmine_detox_residential_php=jasmine_detox_residential_php,
-                     split_professional_utox=split_professional_utox)
+                     split_professional_utox=split_professional_utox,
+                     split_professional_utox_150=split_professional_utox_150)
 
         output_files = {}
 
@@ -1028,7 +1037,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
         # report iteration finds no rows (and is skipped).
         rosanna_gets_report = (route_iop_acu_to_rosanna or rosanna_php_iop_only or
                                rosanna_iop_php_acu or rosanna_iop_jasmine_php or
-                               split_professional_utox)
+                               split_professional_utox or split_professional_utox_150)
         staff_redirect = {} if rosanna_gets_report else STAFF_REDIRECT
 
         # Jasmine and CB always get individual reports; Rosanna gets one only
@@ -1265,7 +1274,13 @@ jasmine_detox_residential_php = st.checkbox(
 split_professional_utox = st.checkbox(
     "Give Rosanna first 300 Professional/Utox (sorted by Client), Jasmine gets rest + all IOP",
     value=False,
-    help="When checked, all Professional and Utox services are sorted by Client (column C) A-Z. First 300 rows go to Rosanna, remaining go to Jasmine. All IOP goes to Jasmine. Creates separate reports for both."
+    help="When checked, all Professional and Utox services are sorted by Client (column C) A-Z. First 300 rows go to Rosanna, remaining go to Jasmine. All IOP goes to Jasmine. Rosanna receives no other rows. Creates separate reports for both."
+)
+
+split_professional_utox_150 = st.checkbox(
+    "Give Rosanna first 150 Professional/Utox (sorted by Client), Jasmine gets rest + all IOP",
+    value=False,
+    help="Same as the option above, but only the first 150 rows go to Rosanna instead of 300. If both options are checked, 150 takes precedence."
 )
 
 if uploaded_file is not None:
@@ -1290,6 +1305,7 @@ if uploaded_file is not None:
             exclude_detox_residential=exclude_detox_residential,
             jasmine_detox_residential_php=jasmine_detox_residential_php,
             split_professional_utox=split_professional_utox,
+            split_professional_utox_150=split_professional_utox_150,
         )
 
         if wm_count > 0:
