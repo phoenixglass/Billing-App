@@ -32,6 +32,9 @@ Weekly billing schedule:
 
 The "Run PHP on Mondays" option exempts Partial Hospitalization from the Monday restriction.
 
+**Self Pay (CB)**: every service is billable every day, except e-care, which
+still only bills on Tuesdays.
+
 ## Reports
 
 Individual workbooks are generated for **Jasmine** and **CB** only. All other staff
