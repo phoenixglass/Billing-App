@@ -339,12 +339,12 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
             ws.cell(row, 1).value = staff
             continue
 
-        # Check if service is non-billable for this day using weekday rules
-        is_non_billable = is_non_billable_service_for_weekday(service, day_of_week)
-
-        # Self-Pay (CB): IOP is always billable every day regardless of weekday rules.
-        if group == "Self Pay" and "iop" in service_lower:
-            is_non_billable = False
+        # Check if service is non-billable for this day using weekday rules.
+        # Self Pay is billable every day for every service except e-care,
+        # which still only bills on Tuesdays.
+        is_non_billable = is_non_billable_service_for_weekday(
+            service, day_of_week, self_pay=(group == "Self Pay")
+        )
 
         # Unable to Bill: O'Flynn + OP Chappaqua or OP NYC
         if billing_provider == "O'Flynn, Karen":

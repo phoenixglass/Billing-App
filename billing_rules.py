@@ -23,6 +23,9 @@ E-care notes:
 - Matches e-care variants: "e-care", "e care", "ecare", "extended care" (case-insensitive).
 
 php_on_monday=True exempts Partial Hospitalization from the Monday restriction.
+
+self_pay=True treats every service as billable every day, except e-care which
+still only bills on Tuesdays.
 """
 from datetime import datetime
 from typing import Tuple
@@ -71,7 +74,7 @@ def _is_programming_service(service: str) -> bool:
 
 
 def is_non_billable_service_for_weekday(
-    service: str, weekday: int, php_on_monday: bool = False
+    service: str, weekday: int, php_on_monday: bool = False, self_pay: bool = False
 ) -> bool:
     """
     Return True if the given service (string) should be treated as non-billable
@@ -80,12 +83,18 @@ def is_non_billable_service_for_weekday(
     - service: original service string (case-insensitive checks will be used)
     - weekday: 0=Monday .. 6=Sunday
     - php_on_monday: when True, Partial Hospitalization is billable on Mondays
+    - self_pay: when True, every service is billable every day except e-care,
+      which still only bills on Tuesdays
     """
     s = (service or "").lower().strip()
 
-    # e-care is only billed on Tuesdays
+    # e-care is only billed on Tuesdays (applies to self-pay too)
     if _is_ecare(s):
         return weekday != 1
+
+    # Self Pay: every other service is billable every day
+    if self_pay:
+        return False
 
     # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
     # plus weekends; non-billable only on Tuesday.

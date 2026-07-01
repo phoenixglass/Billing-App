@@ -272,7 +272,7 @@ def _is_programming_service(service: str) -> bool:
     )
 
 def is_non_billable_service_for_weekday(
-    service: str, weekday: int, php_on_monday: bool = False
+    service: str, weekday: int, php_on_monday: bool = False, self_pay: bool = False
 ) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
@@ -296,15 +296,21 @@ def is_non_billable_service_for_weekday(
         service: Service name (case-insensitive matching)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
         php_on_monday: When True, Partial Hospitalization is billable on Mondays
+        self_pay: When True, every service is billable every day except
+            e-care, which still only bills on Tuesdays.
 
     Returns:
         True if service is non-billable for the given weekday
     """
     service_lower = service.lower()
 
-    # e-care is billable on Tuesdays only
+    # e-care is billable on Tuesdays only (applies to self-pay too)
     if _is_ecare(service_lower):
         return weekday != 1
+
+    # Self Pay: every other service is billable every day
+    if self_pay:
+        return False
 
     # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
     # and weekends; non-billable only on Tuesday.
@@ -410,7 +416,7 @@ def _is_programming_service(service: str) -> bool:
     )
 
 def is_non_billable_service_for_weekday(
-    service: str, weekday: int, php_on_monday: bool = False
+    service: str, weekday: int, php_on_monday: bool = False, self_pay: bool = False
 ) -> bool:
     """
     Determine if a service is non-billable for a given weekday.
@@ -434,15 +440,21 @@ def is_non_billable_service_for_weekday(
         service: Service name (case-insensitive)
         weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
         php_on_monday: When True, Partial Hospitalization is billable on Mondays
+        self_pay: When True, every service is billable every day except
+            e-care, which still only bills on Tuesdays.
 
     Returns:
         True if service is non-billable for this weekday
     """
     service_lower = service.lower()
 
-    # e-care is billable on Tuesdays only
+    # e-care is billable on Tuesdays only (applies to self-pay too)
     if _is_ecare(service_lower):
         return weekday != 1
+
+    # Self Pay: every other service is billable every day
+    if self_pay:
+        return False
 
     # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
     # and weekends; non-billable only on Tuesday.
@@ -629,10 +641,14 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         staff = None
 
-        # CB: Self Pay always goes to CB, overriding every other rule (weekday
-        # billability, Unable to Bill, Melissa/WM routing, Jasmine splits, etc.)
+        # CB: Self Pay is billable every day for every service except e-care,
+        # which only bills on Tuesdays; e-care on other days is Unable to Bill.
+        # This overrides every other rule (Melissa/WM routing, Jasmine splits, etc.)
         if group == "Self Pay":
-            ws.cell(row, 1).value = "CB"
+            if is_non_billable_service_for_weekday(service, day_of_week, self_pay=True):
+                ws.cell(row, 1).value = "Unable to Bill"
+            else:
+                ws.cell(row, 1).value = "CB"
             continue
 
         # If split mode is enabled, use pre-computed assignment for those rows

@@ -228,6 +228,26 @@ def test_php_on_monday_option():
     assert not is_non_billable_service_for_weekday('Partial Hospitalization', 4, php_on_monday=True)
 
 
+def test_self_pay_every_service_every_day_except_ecare():
+    """self_pay=True: every service billable every day except e-care (Tuesday only)."""
+    for weekday in range(7):
+        assert not is_non_billable_service_for_weekday('Detox', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('Residential', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('IOP', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('Acupuncture', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('Individual Therapy', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('Drug Screen', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('Utox', weekday, self_pay=True)
+
+        if weekday == 1:  # Tuesday
+            assert not is_non_billable_service_for_weekday('e-care', weekday, self_pay=True)
+            assert not is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
+        else:
+            assert is_non_billable_service_for_weekday('e-care', weekday, self_pay=True)
+            assert is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
+
+
 def test_case_insensitive_matching():
     """Test that service matching is case-insensitive."""
     weekday = 0  # Monday
@@ -278,6 +298,9 @@ if __name__ == '__main__':
 
     test_php_on_monday_option()
     print("✓ test_php_on_monday_option passed")
+
+    test_self_pay_every_service_every_day_except_ecare()
+    print("✓ test_self_pay_every_service_every_day_except_ecare passed")
 
     test_case_insensitive_matching()
     print("✓ test_case_insensitive_matching passed")
