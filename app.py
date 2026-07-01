@@ -620,14 +620,20 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         staff = None
 
+        # CB: Self Pay always goes to CB, overriding every other rule (weekday
+        # billability, Unable to Bill, Melissa/WM routing, Jasmine splits, etc.)
+        if group == "Self Pay":
+            ws.cell(row, 1).value = "CB"
+            continue
+
         # If split_professional_utox is enabled, use pre-computed assignment for those rows
         if split_professional_utox and row in split_assignment:
             staff = split_assignment[row]
             ws.cell(row, 1).value = staff
             continue
 
-        # All IOP goes to Jasmine when split_professional_utox is enabled, except for Self-Pay IOP (CB)
-        if split_professional_utox and "iop" in service_lower and group != "Self Pay":
+        # All IOP goes to Jasmine when split_professional_utox is enabled
+        if split_professional_utox and "iop" in service_lower:
             staff = "Jasmine"
             ws.cell(row, 1).value = staff
             continue
@@ -644,16 +650,6 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
         # Check if service is non-billable for this day using weekday rules
         is_non_billable = is_non_billable_service_for_weekday(service, day_of_week, php_on_monday)
-
-        # Self-Pay (CB): Specific services are always billable every day regardless of weekday rules.
-        if group == "Self Pay" and is_cb_billable_service(service):
-            is_non_billable = False
-
-        # Self-Pay (CB): Any service in an OP (Outpatient) program is always billable.
-        if group == "Self Pay" and 'group_fld1' in cols:
-            group_fld1_val = str(ws.cell(row, cols['group_fld1']).value or "").strip()
-            if group_fld1_val.upper().startswith("OP"):
-                is_non_billable = False
 
         # When the Jasmine D/R/PHP option is active, Detox, Residential, and PHP
         # are billable on every weekday so they can be routed to Jasmine.
@@ -690,11 +686,11 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             staff = "Unable to Bill"
 
         # split_professional_utox: Professional and Utox services sorted by Client
-        # First 300 to Rosanna, rest to Jasmine. All IOP (except Self Pay) goes to Jasmine.
+        # First 300 to Rosanna, rest to Jasmine. All IOP goes to Jasmine.
         if not staff and split_professional_utox:
             if row in split_assignment:
                 staff = split_assignment[row]
-            elif "iop" in service_lower and group != "Self Pay":
+            elif "iop" in service_lower:
                 staff = "Jasmine"
 
         # Melissa: (Detox or Residential) + (Aetna or Humana), but not drug screens
@@ -704,10 +700,6 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
 
             if has_detox_res and has_insurance and not is_drug_screen(service):
                 staff = "Melissa"
-
-        # CB: Self Pay
-        if not staff and group == "Self Pay":
-            staff = "CB"
 
         # Rosanna: Insurance + services based on active option
         if not staff and group == "Insurance":
@@ -885,38 +877,6 @@ def is_wm_program_level(cell_value) -> bool:
 def is_op_wm_program_level(cell_value) -> bool:
     """Return True if the Program Level cell contains 'OP WM'."""
     return "OP WM" in str(cell_value or "").upper()
-
-def is_cb_billable_service(service: str) -> bool:
-    """Return True if service is billable every day for CB (self pay).
-
-    All the following services are billable every day for CB (Self Pay):
-    - Telemed: Outpatient Group, Assessment/Diag, Crisis Psychotherapy, Family Sessions, IOP, etc.
-    - Admin/Injection Add On
-    - Family Sessions (with/without client)
-    - IOP (all locations: Adolescent, Canaan, Chappaqua, Huntington, NYC, Ramsey, Scholarship, Wilton)
-    - Medication Admin/Injection services
-    - OP: Psych Appointments (all durations)
-    - Outpatient services (all durations, including EMDR variants)
-    - Outpatient Family Therapy and Group sessions
-    - Psychiatric Diag. Eval. W. Med Services
-    """
-    s = service.lower()
-    cb_keywords = (
-        "telemed: outpatient group",
-        "admin/injection add on",
-        "assessment/diag (bps) w/o med services",
-        "crisis psychotherapy",
-        "family session",
-        "iop",
-        "medication admin/injection",
-        "OP: psych",
-        "op: psych",
-        "outpatient",
-        "outpaitent",
-        "psychiatric diag",
-    )
-    return any(keyword in s for keyword in cb_keywords)
-
 
 def is_anthem_payer(payer: str) -> bool:
     """Return True if the payer contains 'anthem'."""
