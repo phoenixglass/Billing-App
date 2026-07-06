@@ -4,7 +4,14 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from pathlib import Path
 import re
 from datetime import datetime
-from billing_rules import is_non_billable_service_for_weekday
+
+from billing_rules import (
+    parse_weekday_from_token,
+    is_non_billable_service_for_weekday,
+    is_professional_claim_type,
+    _is_drug_screen as is_drug_screen,
+    ROSANNA_PROFESSIONAL_CAP,
+)
 
 stubs_required = False  # no Streamlit in the standalone script; keep for parity if needed
 
@@ -14,95 +21,6 @@ def extract_date_from_filename(filename):
     if match:
         return match.group(1)
     return None
-
-def _is_ecare(service: str) -> bool:
-    """
-    Check if service is e-care (case-insensitive).
-    Handles variants: 'e-care', 'e care', 'ecare', 'extended care'
-    """
-    s = service.lower()
-    return any(variant in s for variant in ['e-care', 'e care', 'ecare', 'extended care'])
-
-DRUG_SCREEN_KEYWORDS = ("drug screen", "utox", "urine tox", "drug test", "uds")
-
-def is_drug_screen(service: str) -> bool:
-    """Return True if the service is a drug screen."""
-    s = service.lower()
-    return any(kw in s for kw in DRUG_SCREEN_KEYWORDS)
-
-def _is_programming_service(service: str) -> bool:
-    """Check if service is a Programming service: Detox, Residential, PHP, or IOP."""
-    s = service.lower()
-    return (
-        'detox' in s
-        or 'residential' in s
-        or 'partial hospitalization' in s
-        or 'php' in s
-        or 'iop' in s
-    )
-
-def is_non_billable_service_for_weekday(
-    service: str, weekday: int, php_on_monday: bool = False
-) -> bool:
-    """
-    Determine if a service is non-billable for a given weekday.
-
-    Weekly billing schedule:
-    - Monday (0):    Professional + Utox     (Programming + e-care non-billable)
-    - Tuesday (1):   E-care + Programming    (Professional + Utox non-billable)
-    - Wednesday (2): Professional + Utox     (Programming + e-care non-billable)
-    - Thursday (3):  Programming + Professional + Utox (e-care non-billable)
-    - Friday (4):    Programming + Professional + Utox (e-care non-billable)
-    - Saturday/Sunday (5,6): all services billable except e-care
-
-    Service categories:
-    - Programming: Detox, Residential, Partial Hospitalization (PHP), IOP
-    - Professional: all other services (including Acupuncture)
-    - Utox: drug screen services
-
-    E-care is billable on Tuesdays only.
-
-    Args:
-        service: Service name (case-insensitive matching)
-        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-        php_on_monday: When True, Partial Hospitalization is billable on Mondays
-
-    Returns:
-        True if service is non-billable for the given weekday
-    """
-    service_lower = service.lower()
-
-    # e-care is billable on Tuesdays only
-    if _is_ecare(service_lower):
-        return weekday != 1
-
-    # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
-    # and weekends; non-billable only on Tuesday.
-    if is_drug_screen(service):
-        return weekday == 1
-
-    is_programming = _is_programming_service(service_lower)
-
-    # Monday and Wednesday: Professional + Utox only (Programming non-billable)
-    if weekday in (0, 2):
-        if not is_programming:
-            return False
-        if weekday == 0 and php_on_monday and (
-            'partial hospitalization' in service_lower or 'php' in service_lower
-        ):
-            return False
-        return True
-
-    # Tuesday: E-care + Programming only (Professional + Utox non-billable)
-    if weekday == 1:
-        return not is_programming
-
-    # Thursday and Friday: Programming + Professional + Utox all billable
-    if weekday in (3, 4):
-        return False
-
-    # Saturday and Sunday: everything billable (e-care handled above)
-    return False
 
 def is_wm_program_level(cell_value) -> bool:
     """Return True if the Program Level cell contains 'WM'."""
@@ -189,105 +107,33 @@ def step_1_extract_invalid(ws):
     print(f"Extracted {len(invalid_rows)} invalid rows to 'Invalid' sheet")
     return len(invalid_rows)
 
-def _is_ecare(service: str) -> bool:
-    """Check if service is e-care (handles common variants)"""
-    # Handle common e-care variants: "e-care", "e care", "ecare", "extended care"
-    s = service.lower()
-    return any(variant in s for variant in ["e-care", "e care", "ecare", "extended care"])
+def assign_staff(ws, date_token: str = None):
+    """Assign staff names based on the standard daily billing rules.
 
-def is_non_billable_service_for_weekday(
-    service: str, weekday: int, php_on_monday: bool = False
-) -> bool:
+    - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
+      bills every day, with no exceptions.
+    - Jasmine and Rosanna only ever receive GROUPFLD2 == "Insurance" rows.
+    - Among Insurance rows, the "professional pool" is every row whose
+      Claim Type is CMS-1500, sorted alphabetically by Client. Rosanna
+      receives the first ROSANNA_PROFESSIONAL_CAP[weekday] of that sorted
+      pool (0 on Wednesdays/weekends); the rest of the pool goes to
+      Jasmine.
+    - Jasmine also receives Insurance rows that are billable Programming
+      (Detox, Residential, PHP, IOP) or e-care for that weekday.
+    - Any other Insurance row (not billable that day), or any row that is
+      neither Self Pay nor Insurance, is Unable to Bill.
+    - Melissa (WM Program Level, or Aetna/Humana Detox/Residential) and
+      the O'Flynn Karen OP Chappaqua/OP NYC "Unable to Bill" rule take
+      priority over all of the above.
     """
-    Determine if a service is non-billable for a given weekday.
 
-    Weekly billing schedule:
-    - Monday (0):    Professional + Utox     (Programming + e-care non-billable)
-    - Tuesday (1):   E-care + Programming    (Professional + Utox non-billable)
-    - Wednesday (2): Professional + Utox     (Programming + e-care non-billable)
-    - Thursday (3):  Programming + Professional + Utox (e-care non-billable)
-    - Friday (4):    Programming + Professional + Utox (e-care non-billable)
-    - Saturday/Sunday (5,6): all services billable except e-care
-
-    Service categories:
-    - Programming: Detox, Residential, Partial Hospitalization (PHP), IOP
-    - Professional: all other services (including Acupuncture)
-    - Utox: drug screen services
-
-    E-care is billable on Tuesdays only.
-
-    Args:
-        service: Service name (case-insensitive)
-        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-        php_on_monday: When True, Partial Hospitalization is billable on Mondays
-
-    Returns:
-        True if service is non-billable for this weekday
-    """
-    service_lower = service.lower()
-
-    # e-care is billable on Tuesdays only
-    if _is_ecare(service_lower):
-        return weekday != 1
-
-    # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
-    # and weekends; non-billable only on Tuesday.
-    if is_drug_screen(service):
-        return weekday == 1
-
-    is_programming = _is_programming_service(service_lower)
-
-    # Monday and Wednesday: Professional + Utox only (Programming non-billable)
-    if weekday in (0, 2):
-        if not is_programming:
-            return False
-        if weekday == 0 and php_on_monday and (
-            "partial hospitalization" in service_lower or "php" in service_lower
-        ):
-            return False
-        return True
-
-    # Tuesday: E-care + Programming only (Professional + Utox non-billable)
-    if weekday == 1:
-        return not is_programming
-
-    # Thursday and Friday: Programming + Professional + Utox all billable
-    if weekday in (3, 4):
-        return False
-
-    # Saturday and Sunday: everything billable (e-care handled above)
-    return False
-
-# Rosanna's caseload is currently redirected to Jasmine. The Rosanna routing
-# options are kept intact so they can be re-enabled for future exceptions —
-# clear this mapping to restore Rosanna's own assignments and report.
-STAFF_REDIRECT = {"Rosanna": "Jasmine"}
-
-
-def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = False,
-                 rosanna_php_iop_only: bool = False,
-                 jasmine_detox_residential_only: bool = False):
-    """Assign staff names based on business rules
-
-    Args:
-        ws: Worksheet to process
-        date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
-        route_iop_acu_to_rosanna: If True, only IOP and Acupuncture go to Rosanna and all
-            remaining services default to Jasmine instead of Rosanna.
-        rosanna_php_iop_only: If True, only PHP (Partial Hospitalization) and IOP go to
-            Rosanna (Acupuncture excluded).
-        jasmine_detox_residential_only: If True, Jasmine only receives Detox and Residential
-            rows; she is not used as the fallback default for unmatched services.
-    """
-    
-    # Find column indices (after Staff/Status insert, columns shift by 1)
     cols = {}
     for col in range(1, ws.max_column + 1):
         header = ws.cell(1, col).value
         if header == "GROUPFLD2":
             cols['group'] = col
         elif header == "GROUPFLD1":
-            cols['groupfld1'] = col
+            cols['group_fld1'] = col
         elif header == "Service":
             cols['service'] = col
         elif header == "Payer":
@@ -296,108 +142,98 @@ def assign_staff(ws, date_token: str = None, route_iop_acu_to_rosanna: bool = Fa
             cols['billing_provider'] = col
         elif header == "Program Level":
             cols['program_level'] = col
+        elif header == "Client":
+            cols['client'] = col
+        elif header == "Claim Type":
+            cols['claim_type'] = col
 
-    if not all(k in cols for k in ['group', 'groupfld1', 'service', 'payer', 'billing_provider']):
-        raise ValueError("Missing required columns: GROUPFLD2, GROUPFLD1, Service, Payer, or Billing Provider")
-    
-    # Determine weekday from date_token or fall back to current date
-    if date_token:
-        try:
-            # Parse MMDDYYYY format
-            date_obj = datetime.strptime(date_token, '%m%d%Y')
-            day_of_week = date_obj.weekday()
-            print(f"Using date from filename: {date_token} (weekday={day_of_week})")
-        except ValueError:
-            # Fall back to current date if parsing fails
-            today = datetime.now()
-            day_of_week = today.weekday()
-            print(f"Failed to parse date_token '{date_token}', using current date (weekday={day_of_week})")
+    if not all(k in cols for k in ['group', 'service', 'payer', 'claim_type', 'client']):
+        raise ValueError(
+            "Missing required columns: GROUPFLD2, Service, Payer, Claim Type, or Client"
+        )
+
+    weekday, did_fallback = parse_weekday_from_token(date_token)
+    if did_fallback:
+        print(f"Failed to parse date_token '{date_token}', using current weekday={weekday}")
     else:
-        # Fall back to current date if no date_token provided
-        today = datetime.now()
-        day_of_week = today.weekday()
-        print(f"No date_token provided, using current date (weekday={day_of_week})")
-    
-    # Assign staff
+        print(f"Using date from filename: {date_token} (weekday={weekday})")
+
+    rosanna_cap = ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
+
+    row_data_map = {}
+    fixed_staff = {}
+    professional_rows = []
+    other_rows = []
+
     for row in range(2, ws.max_row + 1):
+        row_data_map[row] = [ws.cell(row, col).value for col in range(1, ws.max_column + 1)]
+
         group = str(ws.cell(row, cols['group']).value or "").strip()
-        groupfld1 = str(ws.cell(row, cols['groupfld1']).value or "").strip()
-        service = str(ws.cell(row, cols['service']).value or "").strip()
-        service_lower = service.lower()
-        payer = str(ws.cell(row, cols['payer']).value or "")
-        payer_lower = payer.lower()
-        billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
+        service = str(ws.cell(row, cols['service']).value or "")
+        payer = str(ws.cell(row, cols['payer']).value or "").lower()
+        claim_type = str(ws.cell(row, cols['claim_type']).value or "")
+
+        if group == "Self Pay":
+            fixed_staff[row] = "CB"
+            other_rows.append(row)
+            continue
 
         staff = None
 
-        # WM Program Level: always assigned to Melissa
-        if 'program_level' in cols:
-            if is_wm_program_level(ws.cell(row, cols['program_level']).value):
+        if 'program_level' in cols and is_wm_program_level(ws.cell(row, cols['program_level']).value):
+            staff = "Melissa"
+
+        if not staff and 'billing_provider' in cols and 'group_fld1' in cols:
+            billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
+            group_fld1 = str(ws.cell(row, cols['group_fld1']).value or "").strip()
+            if billing_provider == "O'Flynn, Karen" and group_fld1 in ("OP Chappaqua", "OP NYC"):
+                staff = "Unable to Bill"
+
+        if not staff:
+            service_lower = service.lower()
+            has_detox_res = ("detox" in service_lower or "residential" in service_lower)
+            has_insurance = "aetna" in payer or "humana" in payer
+            if has_detox_res and has_insurance and not is_drug_screen(service):
                 staff = "Melissa"
 
         if staff:
-            ws.cell(row, 1).value = staff
+            fixed_staff[row] = staff
+            other_rows.append(row)
             continue
 
-        # Check if service is non-billable for this day using weekday rules.
-        # Self Pay is billable every day for every service except e-care,
-        # which still only bills on Tuesdays.
-        is_non_billable = is_non_billable_service_for_weekday(
-            service, day_of_week, self_pay=(group == "Self Pay")
-        )
+        if group != "Insurance":
+            fixed_staff[row] = "Unable to Bill"
+            other_rows.append(row)
+            continue
 
-        # Unable to Bill: O'Flynn + OP Chappaqua or OP NYC
-        if billing_provider == "O'Flynn, Karen":
-            if groupfld1 == "OP Chappaqua" or groupfld1 == "OP NYC":
-                staff = "Unable to Bill"
-        
-        # Unable to Bill: Non-billable service for this day of week
-        if not staff and is_non_billable:
-            staff = "Unable to Bill"
-        
-        # CB: Self Pay
-        if not staff and group == "Self Pay":
-            staff = "CB"
+        if is_professional_claim_type(claim_type):
+            client = str(ws.cell(row, cols['client']).value or "").strip()
+            professional_rows.append((row, client))
+            continue
 
-        # Rosanna: Insurance + services based on active option
-        if not staff and group == "Insurance":
-            if rosanna_php_iop_only:
-                if ("iop" in service_lower or "partial hospitalization" in service_lower):
-                    staff = "Rosanna"
-            elif route_iop_acu_to_rosanna:
-                if ("iop" in service_lower or
-                    service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
-            else:
-                if ("iop" in service_lower or
-                    service_lower.startswith("acupuncture") or
-                    "partial hospitalization" in service_lower):
-                    staff = "Rosanna"
+        if is_non_billable_service_for_weekday(service, weekday):
+            fixed_staff[row] = "Unable to Bill"
+        else:
+            fixed_staff[row] = "Jasmine"
+        other_rows.append(row)
 
-        # Melissa: (Detox or Residential but NOT Drug Screen) + (Aetna or Humana)
-        # CHECK MELISSA BEFORE JASMINE - she's more specific
-        if not staff:
-            has_detox_res = ("detox" in service_lower or "residential" in service_lower)
-            no_drug_screen = "drug screen" not in service_lower
-            has_insurance = "aetna" in payer_lower or "humana" in payer_lower
+    professional_rows.sort(key=lambda x: x[1].lower())
 
-            if has_detox_res and no_drug_screen and has_insurance:
-                staff = "Melissa"
+    ordered_rows = [row for row, _ in professional_rows] + other_rows
+    new_row_pos = 2
+    for original_row in ordered_rows:
+        for col in range(1, ws.max_column + 1):
+            ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
+        new_row_pos += 1
 
-        # Jasmine: (Insurance or blank) + (Detox or Residential)
-        if not staff and (group == "Insurance" or group == ""):
-            if (service_lower.startswith("detox") or
-                service_lower.startswith("residential")):
-                staff = "Jasmine"
-
-        # Fill remaining blanks
-        if not staff:
-            if jasmine_detox_residential_only:
-                staff = "Rosanna"
-            else:
-                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
-
-        ws.cell(row, 1).value = staff
+    num_rosanna = min(rosanna_cap, len(professional_rows))
+    new_row_pos = 2
+    for idx in range(len(professional_rows)):
+        ws.cell(new_row_pos, 1).value = "Rosanna" if idx < num_rosanna else "Jasmine"
+        new_row_pos += 1
+    for original_row in other_rows:
+        ws.cell(new_row_pos, 1).value = fixed_staff[original_row]
+        new_row_pos += 1
 
     print("Staff assignment complete")
 
@@ -431,10 +267,11 @@ def finalize_workbook(wb):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
 def export_staff_workbooks(wb, wb_path, date_token):
-    """Export separate workbooks for Jasmine and CB only.
+    """Export separate workbooks for Rosanna, Jasmine, and CB.
 
-    All staff (Melissa, Rosanna, Unable to Bill, etc.) are still assigned in the
-    Masters workbook, but only Jasmine and the CB team receive individual reports.
+    All staff (Melissa, Unable to Bill, etc.) are still assigned in the
+    Masters workbook, but only Rosanna, Jasmine, and CB receive individual
+    reports.
     """
 
     ws = wb.active
@@ -460,7 +297,7 @@ def export_staff_workbooks(wb, wb_path, date_token):
             "Only Melissa is authorized to bill WM."
         )
 
-    for staff_name in ["Jasmine", "CB"]:
+    for staff_name in ["Rosanna", "Jasmine", "CB"]:
         # Create new workbook
         new_wb = openpyxl.Workbook()
         new_ws = new_wb.active
@@ -474,8 +311,7 @@ def export_staff_workbooks(wb, wb_path, date_token):
         new_row = 2
         for row in range(2, ws.max_row + 1):
             assigned_staff = ws.cell(row, 1).value
-            effective_staff = STAFF_REDIRECT.get(assigned_staff, assigned_staff)
-            if effective_staff == staff_name:
+            if assigned_staff == staff_name:
                 # Skip WM program level rows for all staff except Melissa
                 # (Masters retains all rows; only Melissa bills WM)
                 if (staff_name != "Melissa" and
@@ -512,9 +348,9 @@ def main(workbook_path):
     date_token = extract_date_from_filename(Path(workbook_path).name)
     if not date_token:
         print("Warning: Could not extract date (MMDDYYYY) from filename, will use today's date")
-    
+
     print(f"Processing file with date: {date_token if date_token else 'today'}")
-    
+
     # Step 1: Extract invalid
     step_1_extract_invalid(ws)
 
@@ -522,24 +358,15 @@ def main(workbook_path):
     assign_staff(ws, date_token)
 
     # Step 7: Export individual workbooks (only if date_token is available)
-    # Runs before the redirect so the Rosanna routing options stay effective.
     if date_token:
         export_staff_workbooks(wb, workbook_path, date_token)
     else:
         print("Skipping individual workbook export due to missing date token")
 
-    # Redirect Rosanna's caseload into Jasmine in the Masters report so it
-    # matches the individual reports. The Rosanna routing options stay intact
-    # for future exceptions.
-    for row in range(2, ws.max_row + 1):
-        assigned_staff = ws.cell(row, 1).value
-        if assigned_staff in STAFF_REDIRECT:
-            ws.cell(row, 1).value = STAFF_REDIRECT[assigned_staff]
-
     # Save main workbook
     wb.save(workbook_path)
     print(f"Saved main workbook: {workbook_path}")
-    
+
     print("\n✓ All done!")
 
 if __name__ == "__main__":

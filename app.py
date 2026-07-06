@@ -14,6 +14,14 @@ import secrets
 import logging
 from pathlib import Path
 
+from billing_rules import (
+    parse_weekday_from_token,
+    is_non_billable_service_for_weekday,
+    is_professional_claim_type,
+    _is_drug_screen as is_drug_screen,
+    ROSANNA_PROFESSIONAL_CAP,
+)
+
 try:
     from google.cloud import storage
     from google.oauth2 import service_account
@@ -252,94 +260,6 @@ def extract_date_from_filename(filename):
         return match.group(1)
     return None
 
-def _is_ecare(service: str) -> bool:
-    """
-    Check if service is e-care (case-insensitive).
-    Handles variants: 'e-care', 'e care', 'ecare', 'extended care'
-    """
-    s = service.lower()
-    return any(variant in s for variant in ['e-care', 'e care', 'ecare', 'extended care'])
-
-def _is_programming_service(service: str) -> bool:
-    """Check if service is a Programming service: Detox, Residential, PHP, or IOP."""
-    s = service.lower()
-    return (
-        'detox' in s
-        or 'residential' in s
-        or 'partial hospitalization' in s
-        or 'php' in s
-        or 'iop' in s
-    )
-
-def is_non_billable_service_for_weekday(
-    service: str, weekday: int, php_on_monday: bool = False, self_pay: bool = False
-) -> bool:
-    """
-    Determine if a service is non-billable for a given weekday.
-
-    Weekly billing schedule:
-    - Monday (0):    Professional + Utox     (Programming + e-care non-billable)
-    - Tuesday (1):   E-care + Programming    (Professional + Utox non-billable)
-    - Wednesday (2): Professional + Utox     (Programming + e-care non-billable)
-    - Thursday (3):  Programming + Professional + Utox (e-care non-billable)
-    - Friday (4):    Programming + Professional + Utox (e-care non-billable)
-    - Saturday/Sunday (5,6): all services billable except e-care
-
-    Service categories:
-    - Programming: Detox, Residential, Partial Hospitalization (PHP), IOP
-    - Professional: all other services (including Acupuncture)
-    - Utox: drug screen services
-
-    E-care is billable on Tuesdays only.
-
-    Args:
-        service: Service name (case-insensitive matching)
-        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-        php_on_monday: When True, Partial Hospitalization is billable on Mondays
-        self_pay: When True, every service is billable every day except
-            e-care, which still only bills on Tuesdays.
-
-    Returns:
-        True if service is non-billable for the given weekday
-    """
-    service_lower = service.lower()
-
-    # e-care is billable on Tuesdays only (applies to self-pay too)
-    if _is_ecare(service_lower):
-        return weekday != 1
-
-    # Self Pay: every other service is billable every day
-    if self_pay:
-        return False
-
-    # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
-    # and weekends; non-billable only on Tuesday.
-    if is_drug_screen(service):
-        return weekday == 1
-
-    is_programming = _is_programming_service(service_lower)
-
-    # Monday and Wednesday: Professional + Utox only (Programming non-billable)
-    if weekday in (0, 2):
-        if not is_programming:
-            return False
-        if weekday == 0 and php_on_monday and (
-            'partial hospitalization' in service_lower or 'php' in service_lower
-        ):
-            return False
-        return True
-
-    # Tuesday: E-care + Programming only (Professional + Utox non-billable)
-    if weekday == 1:
-        return not is_programming
-
-    # Thursday and Friday: Programming + Professional + Utox all billable
-    if weekday in (3, 4):
-        return False
-
-    # Saturday and Sunday: everything billable (e-care handled above)
-    return False
-
 def get_filename_prefix(filename):
     """Extract the prefix before the date in filename"""
     date_match = re.search(r'(\d{8})', filename)
@@ -398,141 +318,28 @@ def step_1_extract_invalid(ws):
 
     return len(invalid_rows) if invalid_rows else 0
 
-def _is_ecare(service: str) -> bool:
-    """Check if service is e-care (handles common variants)"""
-    # Handle common e-care variants: "e-care", "e care", "ecare", "extended care"
-    s = service.lower()
-    return any(variant in s for variant in ["e-care", "e care", "ecare", "extended care"])
+def assign_staff(ws, date_token: str = None):
+    """Assign staff names based on the standard daily billing rules.
 
-def _is_programming_service(service: str) -> bool:
-    """Check if service is a Programming service: Detox, Residential, PHP, or IOP."""
-    s = service.lower()
-    return (
-        "detox" in s
-        or "residential" in s
-        or "partial hospitalization" in s
-        or "php" in s
-        or "iop" in s
-    )
-
-def is_non_billable_service_for_weekday(
-    service: str, weekday: int, php_on_monday: bool = False, self_pay: bool = False
-) -> bool:
-    """
-    Determine if a service is non-billable for a given weekday.
-
-    Weekly billing schedule:
-    - Monday (0):    Professional + Utox     (Programming + e-care non-billable)
-    - Tuesday (1):   E-care + Programming    (Professional + Utox non-billable)
-    - Wednesday (2): Professional + Utox     (Programming + e-care non-billable)
-    - Thursday (3):  Programming + Professional + Utox (e-care non-billable)
-    - Friday (4):    Programming + Professional + Utox (e-care non-billable)
-    - Saturday/Sunday (5,6): all services billable except e-care
-
-    Service categories:
-    - Programming: Detox, Residential, Partial Hospitalization (PHP), IOP
-    - Professional: all other services (including Acupuncture)
-    - Utox: drug screen services
-
-    E-care is billable on Tuesdays only.
-
-    Args:
-        service: Service name (case-insensitive)
-        weekday: Day of week (0=Monday, 1=Tuesday, ..., 6=Sunday)
-        php_on_monday: When True, Partial Hospitalization is billable on Mondays
-        self_pay: When True, every service is billable every day except
-            e-care, which still only bills on Tuesdays.
-
-    Returns:
-        True if service is non-billable for this weekday
-    """
-    service_lower = service.lower()
-
-    # e-care is billable on Tuesdays only (applies to self-pay too)
-    if _is_ecare(service_lower):
-        return weekday != 1
-
-    # Self Pay: every other service is billable every day
-    if self_pay:
-        return False
-
-    # Drug screens (Utox) follow Professional days: billable Mon/Wed/Thu/Fri
-    # and weekends; non-billable only on Tuesday.
-    if is_drug_screen(service):
-        return weekday == 1
-
-    is_programming = _is_programming_service(service_lower)
-
-    # Monday and Wednesday: Professional + Utox only (Programming non-billable)
-    if weekday in (0, 2):
-        if not is_programming:
-            return False
-        if weekday == 0 and php_on_monday and (
-            "partial hospitalization" in service_lower or "php" in service_lower
-        ):
-            return False
-        return True
-
-    # Tuesday: E-care + Programming only (Professional + Utox non-billable)
-    if weekday == 1:
-        return not is_programming
-
-    # Thursday and Friday: Programming + Professional + Utox all billable
-    if weekday in (3, 4):
-        return False
-
-    # Saturday and Sunday: everything billable (e-care handled above)
-    return False
-
-# Default redirect: Rosanna's caseload folds into Jasmine. This applies unless
-# one of the explicit Rosanna routing options is checked, in which case Rosanna
-# gets her own assignments and report (see process_workbook).
-STAFF_REDIRECT = {"Rosanna": "Jasmine"}
-
-
-def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
-                 route_iop_acu_to_rosanna: bool = False,
-                 rosanna_php_iop_only: bool = False,
-                 jasmine_detox_residential_only: bool = False,
-                 rosanna_iop_php_acu: bool = False,
-                 jasmine_inpatient_professional: bool = False,
-                 php_on_monday: bool = False,
-                 rosanna_iop_jasmine_php: bool = False,
-                 jasmine_iop_professional: bool = False,
-                 jasmine_detox_residential_php: bool = False,
-                 split_professional_utox: bool = False,
-                 split_professional_utox_150: bool = False):
-    """Assign staff names based on business rules
+    - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
+      bills every day, with no exceptions.
+    - Jasmine and Rosanna only ever receive GROUPFLD2 == "Insurance" rows.
+    - Among Insurance rows, the "professional pool" is every row whose
+      Claim Type is CMS-1500, sorted alphabetically by Client. Rosanna
+      receives the first ROSANNA_PROFESSIONAL_CAP[weekday] of that sorted
+      pool (0 on Wednesdays/weekends); the rest of the pool goes to
+      Jasmine.
+    - Jasmine also receives Insurance rows that are billable Programming
+      (Detox, Residential, PHP, IOP) or e-care for that weekday.
+    - Any other Insurance row (not billable that day), or any row that is
+      neither Self Pay nor Insurance, is Unable to Bill.
+    - Melissa (WM/OP WM Program Level, or Aetna/Humana Detox/Residential)
+      and the O'Flynn Karen OP Chappaqua/OP NYC "Unable to Bill" rule take
+      priority over all of the above.
 
     Args:
         ws: Worksheet to process
         date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
-        give_utox_to_jasmine: If True, drug screen (utox) rows are assigned to Jasmine.
-        route_iop_acu_to_rosanna: If True, only IOP and Acupuncture go to Rosanna and all
-            remaining services default to Jasmine instead of Rosanna.
-        rosanna_php_iop_only: If True, only PHP (Partial Hospitalization) and IOP go to
-            Rosanna (Acupuncture excluded).
-        jasmine_detox_residential_only: If True, Jasmine only receives Detox and Residential
-            rows; she is not used as the fallback default for unmatched services.
-        rosanna_iop_php_acu: If True, Rosanna receives IOP, PHP, and Acupuncture services.
-        jasmine_inpatient_professional: If True, Jasmine receives inpatient (Detox/Residential)
-            and all professional outpatient services.
-        php_on_monday: If True, Partial Hospitalization is treated as billable on Mondays.
-        rosanna_iop_jasmine_php: If True, IOP goes to Rosanna and PHP (Partial Hospitalization)
-            goes to Jasmine. Day-of-week rules still apply.
-        jasmine_iop_professional: If True, Jasmine receives IOP, PHP, Acupuncture, and all
-            professional outpatient services. Rosanna does not receive IOP, PHP, or
-            Acupuncture under this option.
-        jasmine_detox_residential_php: If True, Detox, Residential, and PHP (Partial
-            Hospitalization) are treated as billable on every weekday and routed to
-            Jasmine. Jasmine receives only these three services; all other services
-            default to Rosanna.
-        split_professional_utox: If True, Professional and Utox services are sorted by
-            Client (column C) alphabetically. First 300 rows go to Rosanna, remaining go
-            to Jasmine. All IOP goes to Jasmine. Rosanna receives no other rows.
-        split_professional_utox_150: Same as split_professional_utox, but Rosanna only
-            receives the first 150 rows instead of 300. Mutually exclusive with
-            split_professional_utox; if both are set, the 150 limit takes precedence.
     """
 
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -553,258 +360,115 @@ def assign_staff(ws, date_token: str = None, give_utox_to_jasmine: bool = False,
             cols['program_level'] = col
         elif header == "Client":
             cols['client'] = col
+        elif header == "Claim Type":
+            cols['claim_type'] = col
 
-    if not all(k in cols for k in ['group', 'service', 'payer']):
-        raise ValueError("Missing required columns: GROUPFLD2, Service, or Payer")
+    if not all(k in cols for k in ['group', 'service', 'payer', 'claim_type', 'client']):
+        raise ValueError(
+            "Missing required columns: GROUPFLD2, Service, Payer, Claim Type, or Client"
+        )
 
-    # split_professional_utox and split_professional_utox_150 share the same
-    # sort/limit behavior and only differ in the row cap given to Rosanna.
-    split_limit = 150 if split_professional_utox_150 else (300 if split_professional_utox else None)
-    split_mode_active = split_limit is not None
-
-    # Pre-process for split mode: collect, sort, and assign split
-    split_assignment = {}
-    if split_mode_active:
-        professional_utox_rows = []
-        other_rows = []
-        row_data_map = {}
-
-        # Collect all row data and identify professional/utox rows
-        for row in range(2, ws.max_row + 1):
-            row_data = [ws.cell(row, col).value for col in range(1, ws.max_column + 1)]
-            row_data_map[row] = row_data
-
-            service = str(ws.cell(row, cols['service']).value or "")
-            service_lower = service.lower()
-            group = str(ws.cell(row, cols['group']).value or "").strip()
-
-            # Collect Professional services (not IOP, not programming, not drug screens already handled)
-            # Exclude Self Pay (CB) rows from the split
-            is_professional = is_professional_service(service)
-            is_utox = is_drug_screen(service)
-            is_iop = "iop" in service_lower
-
-            if (is_professional or is_utox) and not is_iop and group != "Self Pay":
-                client = str(ws.cell(row, cols.get('client', 3)).value or "").strip()
-                professional_utox_rows.append((row, client, service_lower))
-            else:
-                other_rows.append(row)
-
-        # Sort professional/utox rows by client (column C), alphabetically
-        professional_utox_rows.sort(key=lambda x: x[1].lower())
-
-        # Reorder worksheet: sorted professional/utox first, then other rows
-        new_row_pos = 2
-        for original_row, _, _ in professional_utox_rows:
-            for col in range(1, ws.max_column + 1):
-                ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
-            new_row_pos += 1
-
-        for original_row in other_rows:
-            for col in range(1, ws.max_column + 1):
-                ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
-            new_row_pos += 1
-
-        # Assign staff: first `split_limit` (sorted) to Rosanna, rest to Jasmine
-        num_rosanna_rows = min(split_limit, len(professional_utox_rows))
-        for idx in range(len(professional_utox_rows)):
-            new_row_pos = idx + 2
-            if idx < num_rosanna_rows:
-                split_assignment[new_row_pos] = "Rosanna"
-            else:
-                split_assignment[new_row_pos] = "Jasmine"
-    
-    # Determine weekday from date_token or fall back to current date
-    if date_token:
-        try:
-            # Parse MMDDYYYY format
-            date_obj = datetime.strptime(date_token, '%m%d%Y')
-            day_of_week = date_obj.weekday()
-            print(f"Using date from filename: {date_token} (weekday={day_of_week})")
-        except ValueError:
-            # Fall back to current date if parsing fails
-            today = datetime.now()
-            day_of_week = today.weekday()
-            print(f"Failed to parse date_token '{date_token}', using current date (weekday={day_of_week})")
+    weekday, did_fallback = parse_weekday_from_token(date_token)
+    if did_fallback:
+        print(f"Failed to parse date_token '{date_token}', using current weekday={weekday}")
     else:
-        # Fall back to current date if no date_token provided
-        today = datetime.now()
-        day_of_week = today.weekday()
-        print(f"No date_token provided, using current date (weekday={day_of_week})")
-    
-    # Assign staff
+        print(f"Using date from filename: {date_token} (weekday={weekday})")
+
+    rosanna_cap = ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
+
+    row_data_map = {}
+    fixed_staff = {}        # original_row -> staff already decided
+    professional_rows = []  # (original_row, client) still needing the Rosanna/Jasmine split
+    other_rows = []         # original_row order for every row not in the professional pool
+
     for row in range(2, ws.max_row + 1):
+        row_data_map[row] = [ws.cell(row, col).value for col in range(1, ws.max_column + 1)]
+
         group = str(ws.cell(row, cols['group']).value or "").strip()
         service = str(ws.cell(row, cols['service']).value or "")
-        service_lower = service.lower()
         payer = str(ws.cell(row, cols['payer']).value or "").lower()
+        claim_type = str(ws.cell(row, cols['claim_type']).value or "")
+
+        # CB: Self Pay bills every service every day, no exceptions. This
+        # overrides every other rule.
+        if group == "Self Pay":
+            fixed_staff[row] = "CB"
+            other_rows.append(row)
+            continue
 
         staff = None
 
-        # CB: Self Pay is billable every day for every service except e-care,
-        # which only bills on Tuesdays; e-care on other days is Unable to Bill.
-        # This overrides every other rule (Melissa/WM routing, Jasmine splits, etc.)
-        if group == "Self Pay":
-            if is_non_billable_service_for_weekday(service, day_of_week, self_pay=True):
-                ws.cell(row, 1).value = "Unable to Bill"
-            else:
-                ws.cell(row, 1).value = "CB"
-            continue
-
-        # If split mode is enabled, use pre-computed assignment for those rows
-        if split_mode_active and row in split_assignment:
-            staff = split_assignment[row]
-            ws.cell(row, 1).value = staff
-            continue
-
-        # All IOP goes to Jasmine when split mode is enabled
-        if split_mode_active and "iop" in service_lower:
-            staff = "Jasmine"
-            ws.cell(row, 1).value = staff
-            continue
-
         # WM / OP WM Program Level → Melissa
-        if 'program_level' in cols:
-            pl_value = ws.cell(row, cols['program_level']).value
-            if is_wm_program_level(pl_value):
-                staff = "Melissa"
-
-        if staff:
-            ws.cell(row, 1).value = staff
-            continue
-
-        # Check if service is non-billable for this day using weekday rules
-        is_non_billable = is_non_billable_service_for_weekday(service, day_of_week, php_on_monday)
-
-        # When the Jasmine D/R/PHP option is active, Detox, Residential, and PHP
-        # are billable on every weekday so they can be routed to Jasmine.
-        if jasmine_detox_residential_php and _is_programming_service(service):
-            is_non_billable = False
-
-        # When "Give Jasmine IOP and all professional services" is active,
-        # IOP, PHP, Acupuncture, and professional services are billable on every
-        # weekday so they can be routed to Jasmine.
-        if jasmine_iop_professional and (group == "Insurance" or group == ""):
-            if ("iop" in service_lower or
-                    "partial hospitalization" in service_lower or
-                    "php" in service_lower or
-                    service_lower.startswith("acupuncture") or
-                    is_professional_service(service)):
-                is_non_billable = False
-
-        # When "Give utox to Jasmine" is active, drug screens are billable on
-        # every weekday so they can be routed to Jasmine.
-        if give_utox_to_jasmine and (group == "Insurance" or group == "") and is_drug_screen(service):
-            is_non_billable = False
+        if 'program_level' in cols and is_wm_program_level(ws.cell(row, cols['program_level']).value):
+            staff = "Melissa"
 
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
-        if 'billing_provider' in cols and 'group_fld1' in cols:
+        if not staff and 'billing_provider' in cols and 'group_fld1' in cols:
             billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
             group_fld1 = str(ws.cell(row, cols['group_fld1']).value or "").strip()
-
             if (billing_provider == "O'Flynn, Karen" and
-                (group_fld1 == "OP Chappaqua" or group_fld1 == "OP NYC")):
+                    group_fld1 in ("OP Chappaqua", "OP NYC")):
                 staff = "Unable to Bill"
-
-        # Unable to Bill: Non-billable service for this day of week
-        if not staff and is_non_billable:
-            staff = "Unable to Bill"
 
         # Melissa: (Detox or Residential) + (Aetna or Humana), but not drug screens
         if not staff:
+            service_lower = service.lower()
             has_detox_res = ("detox" in service_lower or "residential" in service_lower)
             has_insurance = "aetna" in payer or "humana" in payer
-
             if has_detox_res and has_insurance and not is_drug_screen(service):
                 staff = "Melissa"
 
-        # Rosanna: Insurance + services based on active option
-        # Skipped entirely in split mode: Rosanna should only ever receive the
-        # pre-computed first-N split_assignment rows, nothing else.
-        if not staff and group == "Insurance" and not split_mode_active:
-            if rosanna_iop_php_acu:
-                if ("iop" in service_lower or "partial hospitalization" in service_lower or
-                        "php" in service_lower or service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
-            elif rosanna_php_iop_only:
-                if ("iop" in service_lower or "partial hospitalization" in service_lower or
-                        "php" in service_lower):
-                    staff = "Rosanna"
-            elif rosanna_iop_jasmine_php:
-                if "iop" in service_lower:
-                    staff = "Rosanna"
-            elif jasmine_iop_professional:
-                # IOP, PHP, Acupuncture, and all professional services go to Jasmine
-                pass
-            elif route_iop_acu_to_rosanna:
-                if ("iop" in service_lower or
-                        service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
-            elif jasmine_detox_residential_php:
-                # PHP goes to Jasmine; IOP and Acupuncture still go to Rosanna
-                if ("iop" in service_lower or
-                        service_lower.startswith("acupuncture")):
-                    staff = "Rosanna"
-            else:
-                if ("iop" in service_lower or
-                        service_lower.startswith("acupuncture") or
-                        "partial hospitalization" in service_lower):
-                    staff = "Rosanna"
+        if staff:
+            fixed_staff[row] = staff
+            other_rows.append(row)
+            continue
 
-        # Jasmine: (Insurance or blank) + (Detox or Residential), but not drug screens
-        # Also receives PHP when rosanna_iop_jasmine_php is enabled
-        if not staff and (group == "Insurance" or group == ""):
-            is_detox_res = ("detox" in service_lower or service_lower.startswith("residential"))
-            is_php = ("partial hospitalization" in service_lower or "php" in service_lower)
-            if ((is_detox_res or
-                    (rosanna_iop_jasmine_php and is_php) or
-                    (jasmine_detox_residential_php and is_php)) and
-                    not is_drug_screen(service)):
-                staff = "Jasmine"
+        # Jasmine and Rosanna only ever receive Insurance rows.
+        if group != "Insurance":
+            fixed_staff[row] = "Unable to Bill"
+            other_rows.append(row)
+            continue
 
-        # Utox to Jasmine: drug screen rows go to Jasmine when checkbox is enabled
-        if not staff and give_utox_to_jasmine and is_drug_screen(service):
-            staff = "Jasmine"
+        if is_professional_claim_type(claim_type):
+            client = str(ws.cell(row, cols['client']).value or "").strip()
+            professional_rows.append((row, client))
+            continue
 
-        # Jasmine: inpatient (detox/residential) and all professional services
-        if not staff and jasmine_inpatient_professional and (group == "Insurance" or group == ""):
-            if ("detox" in service_lower or "residential" in service_lower or
-                    is_professional_service(service)):
-                staff = "Jasmine"
+        if is_non_billable_service_for_weekday(service, weekday):
+            fixed_staff[row] = "Unable to Bill"
+        else:
+            fixed_staff[row] = "Jasmine"
+        other_rows.append(row)
 
-        # Jasmine: IOP, PHP, Acupuncture, and all professional services
-        if not staff and jasmine_iop_professional and (group == "Insurance" or group == ""):
-            if ("iop" in service_lower or
-                    "partial hospitalization" in service_lower or
-                    "php" in service_lower or
-                    service_lower.startswith("acupuncture") or
-                    is_professional_service(service)):
-                staff = "Jasmine"
+    # Move the professional (Insurance + CMS-1500) pool to the top of the
+    # sheet, sorted alphabetically by Client; every other row keeps its
+    # original relative order after that.
+    professional_rows.sort(key=lambda x: x[1].lower())
 
-        # Fill remaining blanks
-        if not staff:
-            if split_mode_active:
-                # In split mode, Rosanna only gets the pre-computed first-N
-                # rows; everything else defaults to Jasmine.
-                staff = "Jasmine"
-            elif jasmine_detox_residential_only or jasmine_detox_residential_php:
-                staff = "Rosanna"
-            else:
-                staff = "Jasmine" if route_iop_acu_to_rosanna else "Rosanna"
+    ordered_rows = [row for row, _ in professional_rows] + other_rows
+    new_row_pos = 2
+    for original_row in ordered_rows:
+        for col in range(1, ws.max_column + 1):
+            ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
+        new_row_pos += 1
 
-        ws.cell(row, 1).value = staff
+    num_rosanna = min(rosanna_cap, len(professional_rows))
+    new_row_pos = 2
+    for idx in range(len(professional_rows)):
+        ws.cell(new_row_pos, 1).value = "Rosanna" if idx < num_rosanna else "Jasmine"
+        new_row_pos += 1
+    for original_row in other_rows:
+        ws.cell(new_row_pos, 1).value = fixed_staff[original_row]
+        new_row_pos += 1
 
     print("Staff assignment complete")
 
 
-def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_screen_statuses: bool = True, include_batch_billings: bool = False, skip_status_columns: bool = False):
+def finalize_workbook(wb, include_batch_billings: bool = False, skip_status_columns: bool = False):
     """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
 
     Args:
         wb: Workbook to finalize.
-        exclude_drug_screens: When True, omit 'Utox Batch' from dropdown (Rosanna only).
-        include_drug_screen_statuses: When False, omit both 'Utox Batch' and 'Inclusive
-            Services' from the dropdown. Used for Jasmine when give_utox_to_jasmine is False.
         include_batch_billings: When True, add 'Batch Billings' to the dropdown (Jasmine only).
         skip_status_columns: When True, skip adding Status/Comments columns (for CB/self-pay).
     """
@@ -824,15 +488,8 @@ def finalize_workbook(wb, exclude_drug_screens: bool = False, include_drug_scree
 
         # Create Sheet2 with validation list
         ws_list = wb.create_sheet("Sheet2")
-        status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings"]
-        if include_drug_screen_statuses:
-            if exclude_drug_screens:
-                # Rosanna with drug screens excluded: keep Inclusive Services but drop Utox Batch
-                status_items.append("Inclusive Services")
-            else:
-                # Rosanna (default) or Jasmine with utox: full dropdown
-                status_items.append("Utox Batch")
-                status_items.append("Inclusive Services")
+        status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings",
+                        "Utox Batch", "Inclusive Services"]
         if include_batch_billings:
             status_items.append("Batch Billings")
 
@@ -886,13 +543,6 @@ def validate_uploaded_file(uploaded_file):
     logger.info(f"User '{st.session_state.get('username', 'unknown')}' uploaded file: {uploaded_file.name} ({file_size} bytes)")
     return True
 
-DRUG_SCREEN_KEYWORDS = ["drug screen", "utox", "urine tox", "drug test", "uds"]
-
-def is_drug_screen(service: str) -> bool:
-    """Return True if the service is a drug screen."""
-    service_lower = service.lower()
-    return any(kw in service_lower for kw in DRUG_SCREEN_KEYWORDS)
-
 def is_wm_program_level(cell_value) -> bool:
     """Return True if the Program Level cell contains 'WM'."""
     return "WM" in str(cell_value or "").upper()
@@ -904,19 +554,6 @@ def is_op_wm_program_level(cell_value) -> bool:
 def is_anthem_payer(payer: str) -> bool:
     """Return True if the payer contains 'anthem'."""
     return "anthem" in payer.lower()
-
-def is_professional_service(service: str) -> bool:
-    """Return True for professional outpatient services (not IOP/PHP/acupuncture/detox/residential/drug screen)."""
-    s = service.lower()
-    return (
-        "iop" not in s and
-        "partial hospitalization" not in s and
-        "php" not in s and
-        not s.startswith("acupuncture") and
-        "detox" not in s and
-        "residential" not in s and
-        not is_drug_screen(service)
-    )
 
 def secure_cleanup(file_path):
     """Securely delete temporary file."""
@@ -937,22 +574,10 @@ def is_bcb_anthem_ct_php_res_detox(payer: str, service: str) -> bool:
     return ("bcb anthem ct" in payer.lower() and
             any(s in service.lower() for s in ["partial hospitalization", "residential", "detox"]))
 
-def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
-                     exclude_optum: bool = False, give_utox_to_jasmine: bool = False,
-                     route_iop_acu_to_rosanna: bool = False,
+def process_workbook(uploaded_file, exclude_optum: bool = False,
                      exclude_bcb_anthem_ct: bool = False,
-                     rosanna_php_iop_only: bool = False,
-                     jasmine_detox_residential_only: bool = False,
-                     rosanna_iop_php_acu: bool = False,
-                     jasmine_inpatient_professional: bool = False,
                      exclude_anthem_rosanna_jasmine_owm: bool = False,
-                     php_on_monday: bool = False,
-                     rosanna_iop_jasmine_php: bool = False,
-                     jasmine_iop_professional: bool = False,
-                     exclude_detox_residential: bool = False,
-                     jasmine_detox_residential_php: bool = False,
-                     split_professional_utox: bool = False,
-                     split_professional_utox_150: bool = False):
+                     exclude_detox_residential: bool = False):
     """Process the uploaded workbook"""
     tmp_path = None
     try:
@@ -972,18 +597,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
         filename_prefix = get_filename_prefix(uploaded_file.name)
 
         invalid_count = step_1_extract_invalid(ws)
-        assign_staff(ws, date_token, give_utox_to_jasmine=give_utox_to_jasmine,
-                     route_iop_acu_to_rosanna=route_iop_acu_to_rosanna,
-                     rosanna_php_iop_only=rosanna_php_iop_only,
-                     jasmine_detox_residential_only=jasmine_detox_residential_only,
-                     rosanna_iop_php_acu=rosanna_iop_php_acu,
-                     jasmine_inpatient_professional=jasmine_inpatient_professional,
-                     php_on_monday=php_on_monday,
-                     rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
-                     jasmine_iop_professional=jasmine_iop_professional,
-                     jasmine_detox_residential_php=jasmine_detox_residential_php,
-                     split_professional_utox=split_professional_utox,
-                     split_professional_utox_150=split_professional_utox_150)
+        assign_staff(ws, date_token)
 
         output_files = {}
 
@@ -1008,16 +622,8 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                 if is_wm_program_level(pl):
                     wm_count += 1
 
-        # Rosanna gets her own report when any explicit Rosanna routing option
-        # is checked; otherwise her caseload is redirected to Jasmine and her
-        # report iteration finds no rows (and is skipped).
-        rosanna_gets_report = (route_iop_acu_to_rosanna or rosanna_php_iop_only or
-                               rosanna_iop_php_acu or rosanna_iop_jasmine_php or
-                               split_professional_utox or split_professional_utox_150)
-        staff_redirect = {} if rosanna_gets_report else STAFF_REDIRECT
-
-        # Jasmine and CB always get individual reports; Rosanna gets one only
-        # when activated above. Melissa, Unable to Bill, etc. stay Masters-only.
+        # Rosanna, Jasmine, and CB always get individual reports (empty ones
+        # are skipped below). Melissa, Unable to Bill, etc. stay Masters-only.
         for staff_name in ["Rosanna", "Jasmine", "CB"]:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
@@ -1029,8 +635,7 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             new_row = 2
             for row in range(2, ws.max_row + 1):
                 assigned_staff = ws.cell(row, 1).value
-                effective_staff = staff_redirect.get(assigned_staff, assigned_staff)
-                if effective_staff == staff_name:
+                if assigned_staff == staff_name:
                     # Exclude Optum utox rows from all individual workbooks
                     if (exclude_optum and service_col is not None and
                             payer_col is not None):
@@ -1038,46 +643,11 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                         payer_val = str(ws.cell(row, payer_col).value or "").lower()
                         if is_drug_screen(service_val) and "optum" in payer_val:
                             continue
-                    if (exclude_drug_screens and assigned_staff == "Rosanna" and
-                            service_col is not None):
-                        service_val = str(ws.cell(row, service_col).value or "")
-                        if is_drug_screen(service_val):
-                            continue
                     if (exclude_bcb_anthem_ct and service_col is not None and
                             payer_col is not None):
                         service_val = str(ws.cell(row, service_col).value or "")
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_bcb_anthem_ct_php_res_detox(payer_val, service_val):
-                            continue
-                    if (rosanna_php_iop_only and assigned_staff == "Rosanna" and
-                            service_col is not None):
-                        service_val = str(ws.cell(row, service_col).value or "").lower()
-                        if not ("iop" in service_val or "partial hospitalization" in service_val or "php" in service_val):
-                            continue
-                    if (rosanna_iop_php_acu and assigned_staff == "Rosanna" and
-                            service_col is not None):
-                        service_val = str(ws.cell(row, service_col).value or "").lower()
-                        if not ("iop" in service_val or "partial hospitalization" in service_val or
-                                "php" in service_val or service_val.startswith("acupuncture")):
-                            continue
-                    if (jasmine_detox_residential_only and assigned_staff == "Jasmine" and
-                            service_col is not None):
-                        service_val = str(ws.cell(row, service_col).value or "")
-                        service_lower_val = service_val.lower()
-                        if not ("detox" in service_lower_val or "residential" in service_lower_val):
-                            if not (jasmine_inpatient_professional and
-                                    ("detox" in service_lower_val or
-                                     "residential" in service_lower_val or
-                                     is_professional_service(service_val))):
-                                continue
-                    # Jasmine's report is limited to Detox/Residential/PHP. This
-                    # matches on staff_name (not assigned_staff) so that rows
-                    # redirected into Jasmine from Rosanna are dropped too.
-                    if (jasmine_detox_residential_php and staff_name == "Jasmine" and
-                            service_col is not None):
-                        service_val = str(ws.cell(row, service_col).value or "").lower()
-                        if not ("detox" in service_val or "residential" in service_val or
-                                "partial hospitalization" in service_val or "php" in service_val):
                             continue
                     if (exclude_anthem_rosanna_jasmine_owm and
                             assigned_staff in ("Rosanna", "Jasmine") and
@@ -1096,22 +666,13 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
                         continue
                     for col in range(1, ws.max_column + 1):
                         new_ws.cell(new_row, col).value = ws.cell(row, col).value
-                    # Overwrite the staff column so redirected rows show the
-                    # owning staff name (e.g. Rosanna rows folded into Jasmine
-                    # should read "Jasmine" in Jasmine's individual report).
-                    new_ws.cell(new_row, 1).value = staff_name
                     new_row += 1
 
             if new_row == 2:
                 continue
 
-            if staff_name == "Rosanna":
-                finalize_workbook(new_wb, exclude_drug_screens=exclude_drug_screens)
-            elif staff_name == "Jasmine":
-                # Jasmine only gets "Utox Batch" / "Inclusive Services" when
-                # the "Give utox to Jasmine" checkbox is checked.
-                finalize_workbook(new_wb, include_drug_screen_statuses=give_utox_to_jasmine,
-                                  include_batch_billings=True)
+            if staff_name in ("Rosanna", "Jasmine"):
+                finalize_workbook(new_wb, include_batch_billings=(staff_name == "Jasmine"))
             elif staff_name == "CB":
                 finalize_workbook(new_wb, skip_status_columns=True)
 
@@ -1120,13 +681,6 @@ def process_workbook(uploaded_file, exclude_drug_screens: bool = False,
             output.seek(0)
             output_filename = f"{filename_prefix}{staff_name}.xlsx"
             output_files[output_filename] = output
-
-        # Mirror the redirect in the Masters report so it matches the individual
-        # reports. When Rosanna has her own report this is a no-op.
-        for row in range(2, ws.max_row + 1):
-            assigned_staff = ws.cell(row, 1).value
-            if assigned_staff in staff_redirect:
-                ws.cell(row, 1).value = staff_redirect[assigned_staff]
 
         main_output = io.BytesIO()
         wb.save(main_output)
@@ -1157,10 +711,12 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     st.session_state["current_uploaded_file"] = uploaded_file
 
-exclude_drug_screens = st.checkbox(
-    "Exclude drug screens from Rosanna's report",
-    value=False,
-    help="When checked, rows with drug screen services (drug screen, utox, urine tox, drug test, uds) will not be included in Rosanna's output file, and 'Utox Batch' will be removed from the Status dropdown."
+st.markdown(
+    "Staff assignment now follows the standard daily schedule automatically, based on "
+    "the date in the filename: Self Pay always bills every day to **CB**; for Insurance "
+    "rows, **Rosanna** gets the day's capped number of Professional (Claim Type CMS-1500) "
+    "services sorted alphabetically by Client, and **Jasmine** gets the remaining "
+    "Professional rows plus any billable Programming/e-care rows for that day."
 )
 
 exclude_optum = st.checkbox(
@@ -1169,46 +725,10 @@ exclude_optum = st.checkbox(
     help="When checked, utox (drug screen) rows with Optum as the payer will be excluded from all individual staff workbooks."
 )
 
-give_utox_to_jasmine = st.checkbox(
-    "Give utox to Jasmine",
-    value=False,
-    help="When checked, utox (drug screen) rows will be assigned to Jasmine in the master spreadsheet and included in Jasmine's workbook."
-)
-
-route_iop_acu_to_rosanna = st.checkbox(
-    "Route IOP and Acupuncture to Rosanna (all other services to Jasmine)",
-    value=False,
-    help="When checked, only IOP and Acupuncture services go to Rosanna. All remaining services (including Partial Hospitalization) default to Jasmine instead of Rosanna."
-)
-
 exclude_bcb_anthem_ct = st.checkbox(
     "Exclude BCB Anthem CT for PHP, Residential, and Detox",
     value=False,
     help="When checked, rows where the payer is BCB Anthem CT and the service is PHP (Partial Hospitalization), Residential, or Detox will be excluded from all individual staff workbooks."
-)
-
-rosanna_php_iop_only = st.checkbox(
-    "Give Rosanna only PHP and IOP",
-    value=False,
-    help="When checked, Rosanna only receives PHP (Partial Hospitalization) and IOP services. Acupuncture will not be routed to Rosanna."
-)
-
-jasmine_detox_residential_only = st.checkbox(
-    "Give Jasmine only Detox and Residential",
-    value=False,
-    help="When checked, Jasmine only receives Detox and Residential services. She will not be used as the fallback default for unmatched services."
-)
-
-rosanna_iop_php_acu = st.checkbox(
-    "Give Rosanna IOP, PHP, and Acupuncture",
-    value=False,
-    help="When checked, Rosanna receives IOP, PHP (Partial Hospitalization), and Acupuncture services. Her workbook is filtered to only these three service types."
-)
-
-jasmine_inpatient_professional = st.checkbox(
-    "Give Jasmine Inpatient (Detox/Residential) and all Professional services",
-    value=False,
-    help="When checked, Jasmine receives inpatient services (Detox and Residential) as well as all professional outpatient services. Also expands her workbook when 'Give Jasmine only Detox and Residential' is active."
 )
 
 exclude_anthem_rosanna_jasmine_owm = st.checkbox(
@@ -1217,46 +737,10 @@ exclude_anthem_rosanna_jasmine_owm = st.checkbox(
     help="When checked, rows where the payer contains 'Anthem' will be excluded from Rosanna's and Jasmine's workbooks. Anthem rows are still retained in the Masters report."
 )
 
-php_on_monday = st.checkbox(
-    "Run PHP (Partial Hospitalization) on Mondays",
-    value=False,
-    help="When checked, Partial Hospitalization services will be treated as billable on Mondays instead of being marked 'Unable to Bill'."
-)
-
-rosanna_iop_jasmine_php = st.checkbox(
-    "Give Rosanna IOP and Jasmine PHP",
-    value=False,
-    help="When checked, IOP services go to Rosanna and PHP (Partial Hospitalization) services go to Jasmine. All day-of-week rules still apply."
-)
-
-jasmine_iop_professional = st.checkbox(
-    "Give Jasmine IOP and all Professional services",
-    value=False,
-    help="When checked, IOP, PHP (Partial Hospitalization), Acupuncture, and all professional outpatient services are routed to Jasmine. Rosanna does not receive IOP, PHP, or Acupuncture under this option."
-)
-
 exclude_detox_residential = st.checkbox(
     "Don't give anyone Detox or Residential",
     value=False,
     help="When checked, Detox and Residential service rows are excluded from all individual staff workbooks. They still appear in the Masters report."
-)
-
-jasmine_detox_residential_php = st.checkbox(
-    "Give Jasmine only Detox, Residential, and PHP",
-    value=False,
-    help="When checked, Detox, Residential, and PHP (Partial Hospitalization) are treated as billable on every weekday and routed to Jasmine. Jasmine's report is limited to just these three services. Rosanna does not receive a separate report unless one of her own options is checked; all other services stay in the Masters report only."
-)
-
-split_professional_utox = st.checkbox(
-    "Give Rosanna first 300 Professional/Utox (sorted by Client), Jasmine gets rest + all IOP",
-    value=False,
-    help="When checked, all Professional and Utox services are sorted by Client (column C) A-Z. First 300 rows go to Rosanna, remaining go to Jasmine. All IOP goes to Jasmine. Rosanna receives no other rows. Creates separate reports for both."
-)
-
-split_professional_utox_150 = st.checkbox(
-    "Give Rosanna first 150 Professional/Utox (sorted by Client), Jasmine gets rest + all IOP",
-    value=False,
-    help="Same as the option above, but only the first 150 rows go to Rosanna instead of 300. If both options are checked, 150 takes precedence."
 )
 
 if uploaded_file is not None:
@@ -1265,23 +749,10 @@ if uploaded_file is not None:
         st.info("Processing your file...")
         output_files, invalid_count, date_token, wm_count = process_workbook(
             uploaded_file,
-            exclude_drug_screens=exclude_drug_screens,
             exclude_optum=exclude_optum,
-            give_utox_to_jasmine=give_utox_to_jasmine,
-            route_iop_acu_to_rosanna=route_iop_acu_to_rosanna,
             exclude_bcb_anthem_ct=exclude_bcb_anthem_ct,
-            rosanna_php_iop_only=rosanna_php_iop_only,
-            jasmine_detox_residential_only=jasmine_detox_residential_only,
-            rosanna_iop_php_acu=rosanna_iop_php_acu,
-            jasmine_inpatient_professional=jasmine_inpatient_professional,
             exclude_anthem_rosanna_jasmine_owm=exclude_anthem_rosanna_jasmine_owm,
-            php_on_monday=php_on_monday,
-            rosanna_iop_jasmine_php=rosanna_iop_jasmine_php,
-            jasmine_iop_professional=jasmine_iop_professional,
             exclude_detox_residential=exclude_detox_residential,
-            jasmine_detox_residential_php=jasmine_detox_residential_php,
-            split_professional_utox=split_professional_utox,
-            split_professional_utox_150=split_professional_utox_150,
         )
 
         if wm_count > 0:

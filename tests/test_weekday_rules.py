@@ -1,18 +1,17 @@
 """
-Unit tests for weekday-based non-billable service rules.
+Unit tests for the daily billing schedule helpers in billing_rules.py.
 
-Weekly billing schedule:
-- Monday:    Professional + Utox     (Programming + e-care non-billable)
-- Tuesday:   E-care + Programming    (Professional + Utox non-billable)
-- Wednesday: Professional + Utox     (Programming + e-care non-billable)
-- Thursday:  Programming + Professional + Utox (e-care non-billable)
-- Friday:    Programming + Professional + Utox (e-care non-billable)
-- Sat/Sun:   all services billable except e-care
+Daily billing schedule:
+- Professional (Claim Type CMS-1500) services bill every day of the week.
+- Programming (Detox, Residential, PHP, IOP) bills Tuesday, Thursday,
+  Friday, and weekends; non-billable Monday and Wednesday.
+- E-care bills on Tuesdays only, regardless of Claim Type.
+- Self Pay bills every service every day, with no exceptions.
 
-Programming = Detox, Residential, Partial Hospitalization (PHP), IOP
-Professional = all other services (including Acupuncture)
-Utox = drug screen services
-E-care is billable on Tuesdays only.
+Rosanna/Jasmine split (Insurance rows only):
+- Rosanna's professional-service row cap by weekday: Monday=300,
+  Tuesday=300, Thursday=125, Friday=125. Wednesday and weekends have no
+  cap (Rosanna gets nothing; Jasmine gets the whole professional pool).
 """
 import sys
 from pathlib import Path
@@ -25,12 +24,14 @@ from billing_rules import (
     _is_ecare,
     _is_programming_service,
     is_non_billable_service_for_weekday,
+    is_professional_claim_type,
+    parse_weekday_from_token,
+    ROSANNA_PROFESSIONAL_CAP,
 )
 
 
 def test_ecare_variants():
     """Test that all e-care variants are recognized."""
-    # Test various spellings (case-insensitive)
     assert _is_ecare('e-care')
     assert _is_ecare('e care')
     assert _is_ecare('ecare')
@@ -41,12 +42,10 @@ def test_ecare_variants():
     assert _is_ecare('Extended Care')
     assert _is_ecare('EXTENDED CARE')
 
-    # Test in context
     assert _is_ecare('service e-care session')
     assert _is_ecare('telehealth e care')
     assert _is_ecare('telehealth extended care')
 
-    # Test non-e-care services
     assert not _is_ecare('detox')
     assert not _is_ecare('residential')
     assert not _is_ecare('iop')
@@ -62,7 +61,6 @@ def test_drug_screen_variants():
     assert _is_drug_screen('Drug Test')
     assert _is_drug_screen('UDS')
 
-    # Non-drug-screen services
     assert not _is_drug_screen('Detox')
     assert not _is_drug_screen('IOP')
     assert not _is_drug_screen('Acupuncture')
@@ -77,159 +75,80 @@ def test_programming_service_classification():
     assert _is_programming_service('IOP')
     assert _is_programming_service('DETOX SERVICES')
 
-    # Professional services are not Programming
     assert not _is_programming_service('Acupuncture')
     assert not _is_programming_service('Individual Therapy')
 
 
-def test_monday_professional_and_utox():
-    """Monday: Professional + Utox billable; Programming + e-care non-billable."""
-    weekday = 0  # Monday
+def test_claim_type_professional():
+    """Only Claim Type == CMS-1500 (case/whitespace-insensitive) is Professional."""
+    assert is_professional_claim_type('CMS-1500')
+    assert is_professional_claim_type('cms-1500')
+    assert is_professional_claim_type('  CMS-1500  ')
 
-    # Programming services are non-billable on Monday (now includes IOP)
-    assert is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
-    assert is_non_billable_service_for_weekday('Residential', weekday)
-    assert is_non_billable_service_for_weekday('Detox', weekday)
-    assert is_non_billable_service_for_weekday('IOP', weekday)
-
-    # Professional services are billable on Monday
-    assert not is_non_billable_service_for_weekday('Acupuncture', weekday)
-    assert not is_non_billable_service_for_weekday('Individual Therapy', weekday)
-
-    # Utox/drug screens are billable on Monday
-    assert not is_non_billable_service_for_weekday('Drug Screen', weekday)
-    assert not is_non_billable_service_for_weekday('Utox', weekday)
-
-    # E-care is non-billable on Monday
-    assert is_non_billable_service_for_weekday('e-care', weekday)
-    assert is_non_billable_service_for_weekday('extended care', weekday)
+    assert not is_professional_claim_type('UB-04')
+    assert not is_professional_claim_type('')
+    assert not is_professional_claim_type(None)
 
 
-def test_tuesday_ecare_and_programming():
-    """Tuesday: E-care + Programming billable; Professional + Utox non-billable."""
-    weekday = 1  # Tuesday
+def test_professional_bills_every_day():
+    """A row flagged is_professional=True is billable on every weekday."""
+    for weekday in range(7):
+        assert not is_non_billable_service_for_weekday('Individual Therapy', weekday, is_professional=True)
+        assert not is_non_billable_service_for_weekday('Detox', weekday, is_professional=True)
+        # Even e-care bills every day once it's flagged Professional.
+        assert not is_non_billable_service_for_weekday('e-care', weekday, is_professional=True)
 
-    # Programming services are billable on Tuesday (now includes IOP)
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
-    assert not is_non_billable_service_for_weekday('Residential', weekday)
+
+def test_monday_and_wednesday_programming_non_billable():
+    """Monday and Wednesday: Programming and e-care are non-billable."""
+    for weekday in (0, 2):
+        assert is_non_billable_service_for_weekday('Detox', weekday)
+        assert is_non_billable_service_for_weekday('Residential', weekday)
+        assert is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
+        assert is_non_billable_service_for_weekday('IOP', weekday)
+        assert is_non_billable_service_for_weekday('e-care', weekday)
+        assert is_non_billable_service_for_weekday('extended care', weekday)
+
+        # Non-professional, non-programming services aren't addressed by the
+        # schedule at all, so they're non-billable too.
+        assert is_non_billable_service_for_weekday('Acupuncture', weekday)
+
+
+def test_tuesday_programming_and_ecare_billable():
+    """Tuesday: Programming (including e-care) is billable."""
+    weekday = 1
     assert not is_non_billable_service_for_weekday('Detox', weekday)
+    assert not is_non_billable_service_for_weekday('Residential', weekday)
+    assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
     assert not is_non_billable_service_for_weekday('IOP', weekday)
-
-    # Professional services are non-billable on Tuesday
-    assert is_non_billable_service_for_weekday('Acupuncture', weekday)
-    assert is_non_billable_service_for_weekday('Individual Therapy', weekday)
-
-    # Utox/drug screens are non-billable on Tuesday
-    assert is_non_billable_service_for_weekday('Drug Screen', weekday)
-    assert is_non_billable_service_for_weekday('Utox', weekday)
-
-    # E-care is billable on Tuesday
     assert not is_non_billable_service_for_weekday('e-care', weekday)
     assert not is_non_billable_service_for_weekday('extended care', weekday)
 
 
-def test_wednesday_professional_and_utox():
-    """Wednesday: Professional + Utox billable; Programming + e-care non-billable."""
-    weekday = 2  # Wednesday
-
-    # Programming services are non-billable on Wednesday (now includes IOP)
-    assert is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
-    assert is_non_billable_service_for_weekday('Residential', weekday)
-    assert is_non_billable_service_for_weekday('Detox', weekday)
-    assert is_non_billable_service_for_weekday('IOP', weekday)
-
-    # Professional services are billable on Wednesday
-    assert not is_non_billable_service_for_weekday('Acupuncture', weekday)
-
-    # Utox/drug screens are billable on Wednesday
-    assert not is_non_billable_service_for_weekday('Drug Screen', weekday)
-    assert not is_non_billable_service_for_weekday('Utox', weekday)
-
-    # E-care is non-billable on Wednesday
-    assert is_non_billable_service_for_weekday('e-care', weekday)
-    assert is_non_billable_service_for_weekday('extended care', weekday)
-
-
-def test_thursday_programming_professional_utox():
-    """Thursday: Programming + Professional + Utox billable; e-care non-billable."""
-    weekday = 3  # Thursday
-
-    # All three categories are billable on Thursday
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
-    assert not is_non_billable_service_for_weekday('Residential', weekday)
-    assert not is_non_billable_service_for_weekday('Detox', weekday)
-    assert not is_non_billable_service_for_weekday('IOP', weekday)
-    assert not is_non_billable_service_for_weekday('Acupuncture', weekday)
-    assert not is_non_billable_service_for_weekday('Drug Screen', weekday)
-    assert not is_non_billable_service_for_weekday('Utox', weekday)
-
-    # E-care is non-billable on Thursday
-    assert is_non_billable_service_for_weekday('e-care', weekday)
-    assert is_non_billable_service_for_weekday('extended care', weekday)
-
-
-def test_friday_programming_professional_utox():
-    """Friday: Programming + Professional + Utox billable; e-care non-billable."""
-    weekday = 4  # Friday
-
-    # All three categories are billable on Friday
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
-    assert not is_non_billable_service_for_weekday('Residential', weekday)
-    assert not is_non_billable_service_for_weekday('Detox', weekday)
-    assert not is_non_billable_service_for_weekday('IOP', weekday)
-    assert not is_non_billable_service_for_weekday('Acupuncture', weekday)
-    assert not is_non_billable_service_for_weekday('Drug Screen', weekday)
-    assert not is_non_billable_service_for_weekday('Utox', weekday)
-
-    # E-care is non-billable on Friday
-    assert is_non_billable_service_for_weekday('e-care', weekday)
-    assert is_non_billable_service_for_weekday('extended care', weekday)
-
-
-def test_weekend_only_ecare_non_billable():
-    """Saturday and Sunday: all services billable except e-care."""
-    for weekday in (5, 6):
-        assert is_non_billable_service_for_weekday('e-care', weekday)
-        assert is_non_billable_service_for_weekday('extended care', weekday)
+def test_thursday_friday_programming_billable_no_ecare():
+    """Thursday and Friday: Programming billable, e-care is not."""
+    for weekday in (3, 4):
         assert not is_non_billable_service_for_weekday('Detox', weekday)
         assert not is_non_billable_service_for_weekday('Residential', weekday)
         assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
         assert not is_non_billable_service_for_weekday('IOP', weekday)
-        assert not is_non_billable_service_for_weekday('Acupuncture', weekday)
-        assert not is_non_billable_service_for_weekday('Drug Screen', weekday)
-        assert not is_non_billable_service_for_weekday('Utox', weekday)
+        assert is_non_billable_service_for_weekday('e-care', weekday)
+        assert is_non_billable_service_for_weekday('extended care', weekday)
 
 
-def test_php_on_monday_option():
-    """php_on_monday=True makes Partial Hospitalization billable on Mondays."""
-    weekday = 0  # Monday
-
-    # Default: PHP is non-billable on Monday
-    assert is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
-    assert is_non_billable_service_for_weekday('partial hospitalization', weekday)
-    assert is_non_billable_service_for_weekday('PHP', weekday)
-
-    # With php_on_monday=True: PHP is billable on Monday
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday, php_on_monday=True)
-    assert not is_non_billable_service_for_weekday('partial hospitalization', weekday, php_on_monday=True)
-    assert not is_non_billable_service_for_weekday('PHP', weekday, php_on_monday=True)
-
-    # php_on_monday=True does NOT affect other Monday restrictions
-    assert is_non_billable_service_for_weekday('Residential', weekday, php_on_monday=True)
-    assert is_non_billable_service_for_weekday('Detox', weekday, php_on_monday=True)
-    assert is_non_billable_service_for_weekday('IOP', weekday, php_on_monday=True)
-    assert is_non_billable_service_for_weekday('e-care', weekday, php_on_monday=True)
-
-    # php_on_monday only applies to Monday; PHP stays non-billable on Wednesday
-    assert is_non_billable_service_for_weekday('Partial Hospitalization', 2, php_on_monday=True)
-    # PHP is already billable Tue/Thu/Fri regardless of the flag
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', 1, php_on_monday=True)
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', 3, php_on_monday=True)
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', 4, php_on_monday=True)
+def test_weekend_programming_billable_no_ecare():
+    """Saturday and Sunday: Programming billable, e-care is not."""
+    for weekday in (5, 6):
+        assert not is_non_billable_service_for_weekday('Detox', weekday)
+        assert not is_non_billable_service_for_weekday('Residential', weekday)
+        assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
+        assert not is_non_billable_service_for_weekday('IOP', weekday)
+        assert is_non_billable_service_for_weekday('e-care', weekday)
+        assert is_non_billable_service_for_weekday('extended care', weekday)
 
 
-def test_self_pay_every_service_every_day_except_ecare():
-    """self_pay=True: every service billable every day except e-care (Tuesday only)."""
+def test_self_pay_every_service_every_day_no_exceptions():
+    """self_pay=True: every service billable every day, no exceptions (including e-care)."""
     for weekday in range(7):
         assert not is_non_billable_service_for_weekday('Detox', weekday, self_pay=True)
         assert not is_non_billable_service_for_weekday('Residential', weekday, self_pay=True)
@@ -239,20 +158,44 @@ def test_self_pay_every_service_every_day_except_ecare():
         assert not is_non_billable_service_for_weekday('Individual Therapy', weekday, self_pay=True)
         assert not is_non_billable_service_for_weekday('Drug Screen', weekday, self_pay=True)
         assert not is_non_billable_service_for_weekday('Utox', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('e-care', weekday, self_pay=True)
+        assert not is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
 
-        if weekday == 1:  # Tuesday
-            assert not is_non_billable_service_for_weekday('e-care', weekday, self_pay=True)
-            assert not is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
-        else:
-            assert is_non_billable_service_for_weekday('e-care', weekday, self_pay=True)
-            assert is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
+
+def test_rosanna_professional_cap_by_weekday():
+    """Rosanna's professional cap: Mon/Tue=300, Thu/Fri=125, Wed/weekend=0 (absent)."""
+    assert ROSANNA_PROFESSIONAL_CAP[0] == 300  # Monday
+    assert ROSANNA_PROFESSIONAL_CAP[1] == 300  # Tuesday
+    assert ROSANNA_PROFESSIONAL_CAP[3] == 125  # Thursday
+    assert ROSANNA_PROFESSIONAL_CAP[4] == 125  # Friday
+
+    # Wednesday and weekends are intentionally absent -> cap of 0.
+    assert ROSANNA_PROFESSIONAL_CAP.get(2, 0) == 0
+    assert ROSANNA_PROFESSIONAL_CAP.get(5, 0) == 0
+    assert ROSANNA_PROFESSIONAL_CAP.get(6, 0) == 0
+
+
+def test_parse_weekday_from_token():
+    """MMDDYYYY tokens parse to the correct weekday; invalid tokens fall back."""
+    weekday, did_fallback = parse_weekday_from_token('07062026')  # Monday
+    assert weekday == 0
+    assert not did_fallback
+
+    weekday, did_fallback = parse_weekday_from_token('07072026')  # Tuesday
+    assert weekday == 1
+    assert not did_fallback
+
+    _, did_fallback = parse_weekday_from_token('not-a-date')
+    assert did_fallback
+
+    _, did_fallback = parse_weekday_from_token(None)
+    assert did_fallback
 
 
 def test_case_insensitive_matching():
     """Test that service matching is case-insensitive."""
     weekday = 0  # Monday
 
-    # Programming services are non-billable on Monday regardless of case
     assert is_non_billable_service_for_weekday('DETOX', weekday)
     assert is_non_billable_service_for_weekday('detox', weekday)
     assert is_non_billable_service_for_weekday('Detox', weekday)
@@ -268,7 +211,6 @@ def test_case_insensitive_matching():
 
 
 if __name__ == '__main__':
-    # Run tests
     test_ecare_variants()
     print("✓ test_ecare_variants passed")
 
@@ -278,29 +220,32 @@ if __name__ == '__main__':
     test_programming_service_classification()
     print("✓ test_programming_service_classification passed")
 
-    test_monday_professional_and_utox()
-    print("✓ test_monday_professional_and_utox passed")
+    test_claim_type_professional()
+    print("✓ test_claim_type_professional passed")
 
-    test_tuesday_ecare_and_programming()
-    print("✓ test_tuesday_ecare_and_programming passed")
+    test_professional_bills_every_day()
+    print("✓ test_professional_bills_every_day passed")
 
-    test_wednesday_professional_and_utox()
-    print("✓ test_wednesday_professional_and_utox passed")
+    test_monday_and_wednesday_programming_non_billable()
+    print("✓ test_monday_and_wednesday_programming_non_billable passed")
 
-    test_thursday_programming_professional_utox()
-    print("✓ test_thursday_programming_professional_utox passed")
+    test_tuesday_programming_and_ecare_billable()
+    print("✓ test_tuesday_programming_and_ecare_billable passed")
 
-    test_friday_programming_professional_utox()
-    print("✓ test_friday_programming_professional_utox passed")
+    test_thursday_friday_programming_billable_no_ecare()
+    print("✓ test_thursday_friday_programming_billable_no_ecare passed")
 
-    test_weekend_only_ecare_non_billable()
-    print("✓ test_weekend_only_ecare_non_billable passed")
+    test_weekend_programming_billable_no_ecare()
+    print("✓ test_weekend_programming_billable_no_ecare passed")
 
-    test_php_on_monday_option()
-    print("✓ test_php_on_monday_option passed")
+    test_self_pay_every_service_every_day_no_exceptions()
+    print("✓ test_self_pay_every_service_every_day_no_exceptions passed")
 
-    test_self_pay_every_service_every_day_except_ecare()
-    print("✓ test_self_pay_every_service_every_day_except_ecare passed")
+    test_rosanna_professional_cap_by_weekday()
+    print("✓ test_rosanna_professional_cap_by_weekday passed")
+
+    test_parse_weekday_from_token()
+    print("✓ test_parse_weekday_from_token passed")
 
     test_case_insensitive_matching()
     print("✓ test_case_insensitive_matching passed")

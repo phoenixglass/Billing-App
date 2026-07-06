@@ -10,36 +10,60 @@ An automated billing processor for unbilled revenue reports.
 - Applies weekday-based non-billable service logic using date from filename
 - Generates separate workbooks for each staff member
 
-## Weekday-Based Non-Billable Rules
+## Daily Billing Rules
 
-The system uses the date extracted from the filename (MMDDYYYY format) to determine weekday-based billing rules.
+The system uses the date extracted from the filename (MMDDYYYY format) to determine
+the day's schedule automatically — there are no manual day-of-week toggles.
 
-Services fall into two categories:
+**Self Pay**: every row with `GROUPFLD2` = "Self Pay" goes to **CB**. Every Self Pay
+service bills every day of the week, with no exceptions (including e-care).
 
-- **Programming**: Detox, Residential, Partial Hospitalization (PHP)
-- **Professional**: all other services (including IOP and Acupuncture)
+**Insurance** (`GROUPFLD2` = "Insurance") rows are split between **Rosanna** and
+**Jasmine**. `GROUPFLD2` values other than "Insurance" or "Self Pay" never reach
+Rosanna or Jasmine — they are marked Unable to Bill.
 
-Weekly billing schedule:
+- **Professional** services (identified by the `Claim Type` column equal to
+  `CMS-1500`) bill every day of the week. The Insurance + CMS-1500 rows ("the
+  professional pool") are sorted alphabetically by `Client`. Rosanna receives the
+  first N rows of that sorted pool per the weekday cap below; the rest go to
+  Jasmine.
+- **Programming** services (Detox, Residential, Partial Hospitalization/PHP, IOP)
+  bill Tuesday, Thursday, Friday, and weekends; they are Unable to Bill on Monday
+  and Wednesday. All billable Programming rows go to Jasmine.
+- **E-care** bills on Tuesdays only (regardless of Claim Type). Billable e-care
+  rows go to Jasmine.
 
-- **Monday**: Professional only (Programming non-billable)
-- **Tuesday**: Programming only (Professional non-billable)
-- **Wednesday**: Professional only (Programming non-billable)
-- **Thursday**: Programming + Professional
-- **Friday**: Programming + Professional
-- **Saturday/Sunday**: All services billed except e-care
+Rosanna's professional-pool cap by weekday:
 
-**E-care**: billable on Tuesdays only. The system recognizes 'e-care', 'e care', 'ecare', and 'extended care' (case-insensitive).
+| Day       | Rosanna's cap | Rosanna's report        |
+|-----------|---------------|--------------------------|
+| Monday    | 300           | 1 header + up to 300 rows |
+| Tuesday   | 300           | 1 header + up to 300 rows |
+| Wednesday | 0 (none)      | Not generated             |
+| Thursday  | 125           | 1 header + up to 125 rows |
+| Friday    | 125           | 1 header + up to 125 rows |
+| Sat/Sun   | 0 (none)      | Not generated             |
 
-The "Run PHP on Mondays" option exempts Partial Hospitalization from the Monday restriction.
+Everything past Rosanna's cap in the professional pool goes to Jasmine, along with
+any billable Programming/e-care rows for that day.
 
-**Self Pay (CB)**: every service is billable every day, except e-care, which
-still only bills on Tuesdays.
+The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
+'extended care' (case-insensitive).
+
+**Melissa** and the O'Flynn Karen "Unable to Bill" rule take priority over the
+Rosanna/Jasmine schedule above:
+- WM/OP WM Program Level rows always go to Melissa.
+- Detox/Residential rows billed to Aetna or Humana (and not a drug screen) go to
+  Melissa.
+- Billing Provider "O'Flynn, Karen" with GROUPFLD1 "OP Chappaqua" or "OP NYC" is
+  always Unable to Bill.
 
 ## Reports
 
-Individual workbooks are generated for **Jasmine** and **CB** only. All other staff
-(Melissa, Rosanna, etc.) are still assigned in the Masters workbook but do not
-receive separate reports.
+Individual workbooks are generated for **Rosanna**, **Jasmine**, and **CB**
+(empty reports are skipped, e.g. Rosanna on Wednesdays/weekends). All other staff
+(Melissa, Unable to Bill, etc.) are still assigned in the Masters workbook but do
+not receive separate reports.
 
 ### Fallback Behavior
 
