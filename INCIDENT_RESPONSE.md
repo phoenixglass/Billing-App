@@ -2,6 +2,14 @@
 
 This document outlines procedures for responding to security incidents involving PHI.
 
+> ⚠️ **Note:** The app's authentication (login/password) was removed at the
+> owner's request. The "Failed Login Attack" scenarios, password resets, and
+> credential-revocation steps below are historical and no longer apply — there
+> is no login to attack, reset, or revoke. Anyone who can reach the app URL has
+> full access; unauthorized access must now be detected/prevented at the
+> network level (VPN, firewall, reverse-proxy auth), not by this app. Treat the
+> login-specific sections below as reference for when authentication existed.
+
 ## Incident Severity Levels
 
 ### 🔴 CRITICAL (Respond Immediately - <1 hour)

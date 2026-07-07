@@ -3,14 +3,11 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
 import tempfile
 import os
 import json
-import hmac
-import hashlib
-import secrets
 import logging
 from pathlib import Path
 
@@ -116,140 +113,7 @@ if gcs_handler:
 
 st.set_page_config(page_title="Unbilled Billing App", layout="wide")
 
-# Security: Session timeout (15 minutes of inactivity)
-SESSION_TIMEOUT_MINUTES = 15
-
-# Security: brute-force lockout after repeated failures
-MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
-
-# PBKDF2 work factor for password hashing. Tune upward as hardware improves.
-PBKDF2_ITERATIONS = 600_000
-
-# Environment variable holding a JSON object of {username: pbkdf2_hash}.
-# Generate a hash with hash_password() (see SECURITY.md). No default/built-in
-# credentials are shipped: if this is unset the app refuses to authenticate.
-CREDENTIALS_ENV_VAR = "BILLING_APP_CREDENTIALS"
-
-
-def hash_password(password: str, *, iterations: int = PBKDF2_ITERATIONS) -> str:
-    """Return a salted PBKDF2-HMAC-SHA256 hash string for storage."""
-    salt = secrets.token_bytes(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return f"pbkdf2_sha256${iterations}${salt.hex()}${dk.hex()}"
-
-
-def verify_password(password: str, stored: str) -> bool:
-    """Constant-time verification of a password against a stored PBKDF2 hash."""
-    try:
-        algo, iter_s, salt_hex, hash_hex = stored.split("$")
-        if algo != "pbkdf2_sha256":
-            return False
-        dk = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(iter_s)
-        )
-        return hmac.compare_digest(dk.hex(), hash_hex)
-    except (ValueError, AttributeError):
-        return False
-
-
-def load_credentials() -> dict:
-    """Load {username: pbkdf2_hash} from the credentials environment variable."""
-    raw = os.environ.get(CREDENTIALS_ENV_VAR)
-    if not raw:
-        return {}
-    try:
-        creds = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.error("%s is set but is not valid JSON", CREDENTIALS_ENV_VAR)
-        return {}
-    if not isinstance(creds, dict):
-        logger.error("%s must be a JSON object of {username: hash}", CREDENTIALS_ENV_VAR)
-        return {}
-    return creds
-
-
-def check_password():
-    """Returns True if the user is authenticated."""
-    credentials = load_credentials()
-    if not credentials:
-        st.title("🔒 Secure Login")
-        st.error(
-            f"Authentication is not configured. Set the {CREDENTIALS_ENV_VAR} "
-            "environment variable before starting the app (see SECURITY.md)."
-        )
-        logger.error("Login blocked: %s is not configured", CREDENTIALS_ENV_VAR)
-        return False
-
-    def password_entered():
-        """Validate the submitted username/password pair."""
-        username = st.session_state.get("username_input", "").strip()
-        password = st.session_state.get("password", "")
-
-        # Enforce lockout window before checking the credential.
-        locked_until = st.session_state.get("lockout_until")
-        if locked_until and datetime.now() < locked_until:
-            st.session_state["password_correct"] = False
-            logger.warning("Login attempt during active lockout for user '%s'", username or "unknown")
-            return
-
-        stored = credentials.get(username)
-        if stored and verify_password(password, stored):
-            st.session_state["password_correct"] = True
-            st.session_state["last_activity"] = datetime.now()
-            st.session_state["username"] = username
-            st.session_state["failed_attempts"] = 0
-            st.session_state.pop("lockout_until", None)
-            logger.info("User '%s' logged in successfully", username)
-        else:
-            st.session_state["password_correct"] = False
-            attempts = st.session_state.get("failed_attempts", 0) + 1
-            st.session_state["failed_attempts"] = attempts
-            logger.warning("Failed login attempt for user '%s' (attempt %d)", username or "unknown", attempts)
-            if attempts >= MAX_FAILED_ATTEMPTS:
-                st.session_state["lockout_until"] = datetime.now() + timedelta(minutes=LOCKOUT_MINUTES)
-                logger.warning("User '%s' locked out for %d minutes", username or "unknown", LOCKOUT_MINUTES)
-
-        # Never retain the submitted password in session state.
-        st.session_state.pop("password", None)
-
-    # Check for session timeout
-    if "last_activity" in st.session_state:
-        time_since_activity = datetime.now() - st.session_state["last_activity"]
-        if time_since_activity > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
-            st.session_state["password_correct"] = False
-            logger.info("Session timeout for user '%s'", st.session_state.get("username", "unknown"))
-            st.warning("Session expired due to inactivity. Please log in again.")
-
-    # Update last activity
-    if st.session_state.get("password_correct", False):
-        st.session_state["last_activity"] = datetime.now()
-        return True
-
-    st.title("🔒 Secure Login")
-    st.markdown("### PHI Access Control")
-    st.info("⚠️ This application processes Protected Health Information (PHI). Authorized users only.")
-
-    locked_until = st.session_state.get("lockout_until")
-    if locked_until and datetime.now() < locked_until:
-        remaining = int((locked_until - datetime.now()).total_seconds() // 60) + 1
-        st.error(f"Too many failed attempts. Try again in ~{remaining} minute(s).")
-        return False
-
-    st.text_input("Username", key="username_input")
-    st.text_input("Password", type="password", on_change=password_entered, key="password")
-
-    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
-        st.error("😕 Incorrect username or password")
-
-    return False
-
-if not check_password():
-    st.stop()
-
-# User is authenticated - show main app
 st.title("Unbilled Billing Processor")
-st.markdown(f"👤 Logged in as: **{st.session_state.get('username', 'user')}**")
 st.markdown("Upload your billing file to process it automatically")
 
 
@@ -540,7 +404,7 @@ def validate_uploaded_file(uploaded_file):
     if any(pattern in uploaded_file.name for pattern in suspicious_patterns):
         raise ValueError("Filename contains invalid characters")
     
-    logger.info(f"User '{st.session_state.get('username', 'unknown')}' uploaded file: {uploaded_file.name} ({file_size} bytes)")
+    logger.info(f"Uploaded file: {uploaded_file.name} ({file_size} bytes)")
     return True
 
 def is_wm_program_level(cell_value) -> bool:
@@ -783,8 +647,8 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key=output_filename
             ):
-                logger.info(f"User '{st.session_state.get('username', 'unknown')}' downloaded: {output_filename}")
-    
+                logger.info(f"Downloaded: {output_filename}")
+
     except Exception as e:
-        logger.error(f"Error processing file for user '{st.session_state.get('username', 'unknown')}': {str(e)}")
+        logger.error(f"Error processing file: {str(e)}")
         st.error(f"Error: {str(e)}")

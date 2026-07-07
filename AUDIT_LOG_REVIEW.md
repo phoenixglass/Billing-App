@@ -2,6 +2,14 @@
 
 Regular review of audit logs is required for HIPAA compliance and security monitoring.
 
+> ⚠️ **Note:** The app's authentication (login/password) was removed at the
+> owner's request. The login/failed-login/session-timeout examples below are
+> historical and no longer apply — the app no longer logs login events at all,
+> since there is no login. Everyone who can reach the app URL has full access;
+> access control must be enforced at the network level instead (see
+> SECURITY.md and SECURITY_DEPLOYMENT.md). Treat the sections below as
+> reference for when authentication existed, not current behavior.
+
 ## Log Location & Access
 
 **Log files:** `audit_logs/audit_YYYYMMDD.log`
