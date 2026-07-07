@@ -4,43 +4,38 @@ This application includes the following security controls for handling Protected
 
 ## Authentication & Authorization
 
-### Password Protection
-- Per-user username + password authentication required to access the application
-- **No default/built-in credentials.** The app refuses to authenticate unless the
-  `BILLING_APP_CREDENTIALS` environment variable is configured (see below).
-- Passwords are verified against salted **PBKDF2-HMAC-SHA256** hashes
-  (600,000 iterations), compared in constant time. The plaintext password is
-  never stored.
-- Brute-force protection: after 5 failed attempts the account is locked out for
-  15 minutes.
-
-### Session Management
-- **Automatic timeout**: 15 minutes of inactivity
-- Sessions expire and require re-authentication
-- Last activity tracked to enforce timeout
+⚠️ **The app has no authentication.** A previous version required per-user
+username/password login (PBKDF2-HMAC-SHA256, brute-force lockout, 15-minute
+session timeout); that gate was removed at the owner's request, and the app
+now opens directly to anyone who reaches the URL, with no session or access
+control of any kind. If this app is deployed anywhere reachable by more than
+its intended users, access must be restricted at the infrastructure level
+(private network/VPN, a reverse proxy with its own auth, Streamlit Cloud
+"private" visibility, etc.) — the application itself will not stop anyone
+who has the link.
 
 ## Audit Logging
 
 ### What is Logged
-All PHI access is logged to `audit_logs/audit_YYYYMMDD.log`:
-- User login attempts (success and failure)
+File activity is logged to `audit_logs/audit_YYYYMMDD.log`:
 - File uploads (filename, size, timestamp)
 - File processing operations
 - File downloads
-- Session timeouts
 - Errors and security events
+
+Since there is no authentication, log entries are not attributed to an
+individual user — anyone with the link can perform these actions.
 
 ### Log Format
 ```
-2026-01-26 10:30:15 - INFO - User 'admin' logged in successfully
-2026-01-26 10:31:22 - INFO - User 'admin' uploaded file: billing_01252026.xlsx (245678 bytes)
+2026-01-26 10:31:22 - INFO - Uploaded file: billing_01252026.xlsx (245678 bytes)
 2026-01-26 10:31:25 - INFO - Successfully processed file: billing_01252026.xlsx, generated 6 output files
-2026-01-26 10:32:10 - INFO - User 'admin' downloaded: billing_01252026_Rosanna.xlsx
+2026-01-26 10:32:10 - INFO - Downloaded: billing_01252026_Rosanna.xlsx
 ```
 
 ### Log Protection
 - Logs are excluded from git via `.gitignore`
-- Logs contain timestamps, usernames, and actions
+- Logs contain timestamps and actions (no username, since there's no login)
 - Store logs securely with restricted access
 
 ## File Security
@@ -73,13 +68,14 @@ All PHI access is logged to `audit_logs/audit_YYYYMMDD.log`:
 
 ### For Local/VPN Use
 ✅ Current security features are implemented:
-- Password protection
-- Session management
 - Audit logging
 - Secure file handling
 
+⚠️ There is no authentication. Access must be restricted at the network
+level (local machine only, or VPN) since the application will not do it.
+
 ### Additional Steps Needed
-- [ ] Change default password
+- [ ] Restrict network/deployment access since the app has no login of its own
 - [ ] Restrict file system permissions on audit logs
 - [ ] Regular review of audit logs
 - [ ] Document access procedures
@@ -88,7 +84,8 @@ All PHI access is logged to `audit_logs/audit_YYYYMMDD.log`:
 ### For Production/Internet Deployment
 Additional requirements for HIPAA compliance:
 - [ ] Deploy behind HTTPS with valid certificates
-- [ ] Implement stronger authentication (OAuth, SSO, MFA)
+- [ ] Add authentication (this app has none) — OAuth, SSO, MFA, or a
+  reverse-proxy auth layer
 - [ ] Encrypt audit logs at rest
 - [ ] Implement role-based access control (RBAC)
 - [ ] Regular security audits and penetration testing
@@ -101,39 +98,11 @@ Additional requirements for HIPAA compliance:
 
 ⚠️ **Important**: These security controls provide a baseline but are NOT sufficient for full HIPAA compliance without additional infrastructure-level controls:
 
+- **No authentication of any kind** — anyone with the URL has full access
 - No encryption at rest for temp files (relies on OS/filesystem encryption)
-- Simple password authentication (should use MFA in production)
 - No role-based access control
 - No intrusion detection/prevention
 - No data loss prevention (DLP)
-
-## Configuring Credentials
-
-The app reads accounts from the `BILLING_APP_CREDENTIALS` environment variable,
-which must contain a JSON object mapping each username to a PBKDF2 hash. There
-are no built-in accounts.
-
-1. Generate a hash for each user (run from the project directory):
-```python
-from app import hash_password
-print(hash_password("a_strong_unique_password"))
-```
-
-2. Build the credentials JSON, e.g.:
-```json
-{"jasmine": "pbkdf2_sha256$600000$<salt>$<hash>", "cb": "pbkdf2_sha256$600000$<salt>$<hash>"}
-```
-
-3. Set it in the environment before launching (do NOT hardcode it in source or
-   commit it). For example:
-```bash
-export BILLING_APP_CREDENTIALS='{"jasmine":"pbkdf2_sha256$..."}'
-streamlit run app.py
-```
-
-Store this value in a secret manager or a `.env` file that is excluded from git
-(`.env` is already in `.gitignore`). Use a unique account per person so the audit
-log attributes actions correctly.
 
 ## Security Contact
 
@@ -142,13 +111,13 @@ For security issues or questions, contact your organization's security team or H
 ## Compliance Status
 
 ✅ **Implemented Controls**:
-- Authentication
-- Session management  
 - Audit logging
 - Input validation
 - Secure file cleanup
 
 ⚠️ **Partial/Missing Controls**:
+- Authentication (none — removed at the owner's request)
+- Session management
 - Encryption at rest (depends on OS/filesystem)
 - Multi-factor authentication
 - Role-based access control

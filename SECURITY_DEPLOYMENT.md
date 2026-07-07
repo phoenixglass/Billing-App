@@ -4,26 +4,17 @@ This guide covers deploying the Billing App in a HIPAA-compliant manner for Prot
 
 ## Pre-Deployment Checklist
 
-### 1. Credentials Setup ✓
+### 1. Access Control ⚠️
 
-**Generate password hashes:**
-```bash
-python3 env_setup.py
-```
+**The app has no authentication of its own.** Anyone who can reach the URL has
+full access — there is no username/password gate, no session, no lockout.
+Access must be restricted at the network/infrastructure level instead:
+- Deploy behind a VPN or private network, and/or
+- Put it behind a reverse proxy or platform that provides its own login
+  (e.g. Streamlit Cloud "private" app visibility, an SSO-aware proxy), and/or
+- IP-allowlist the deployment (see Network Security below).
 
-Follow the prompts to create one user account per person. This generates hashes for your `.env` file.
-
-**Create `.env` file:**
-```bash
-# Copy output from env_setup.py
-BILLING_APP_CREDENTIALS='{"username":"pbkdf2_sha256$..."}'
-```
-
-**Important:**
-- ✓ `.env` is in `.gitignore` — never commit it
-- ✓ Use unique, strong passwords (16+ characters, mixed case/numbers/symbols)
-- ✓ One account per user (audit trail attribution)
-- ✓ Store `.env` securely (encrypted, restricted access)
+Do not expose this app on the open internet without one of the above in place.
 
 ---
 
@@ -190,21 +181,7 @@ Create a safe deployment script:
 
 set -e  # Exit on error
 
-# 1. Verify .env exists
-if [ ! -f .env ]; then
-    echo "ERROR: .env file not found"
-    echo "Run: python3 env_setup.py"
-    exit 1
-fi
-
-# 2. Check .env is not in git tracking
-if git ls-files --error-unmatch .env 2>/dev/null; then
-    echo "ERROR: .env is tracked by git! Remove it:"
-    echo "git rm --cached .env"
-    exit 1
-fi
-
-# 3. Verify permissions
+# 1. Verify permissions
 if [ -f audit_logs/audit_*.log 2>/dev/null ]; then
     for log in audit_logs/audit_*.log; do
         perms=$(stat -c %a "$log")
@@ -215,10 +192,7 @@ if [ -f audit_logs/audit_*.log 2>/dev/null ]; then
     done
 fi
 
-# 4. Load environment
-source .env
-
-# 5. Start app
+# 2. Start app
 echo "Starting Billing App..."
 streamlit run app.py --server.port=8501 --logger.level=info
 ```
@@ -228,7 +202,7 @@ streamlit run app.py --server.port=8501 --logger.level=info
 ### 6. Ongoing Security Operations
 
 **Daily:**
-- [ ] Monitor for failed login attempts in audit logs
+- [ ] Confirm network-level access restriction is still in place (VPN/proxy/allowlist) — the app itself has no login
 - [ ] Check for unusual file activity
 
 **Weekly:**
@@ -255,10 +229,8 @@ Are you accessing over VPN or local network only?
 └─ NO → Internet-facing (HTTPS required, proceed to option selection)
 
 LOCAL DEPLOYMENT:
-├─ 1. Run: python3 env_setup.py
-├─ 2. Create .env with output
-├─ 3. Run: source .env && streamlit run app.py
-├─ 4. Access: http://localhost:8501 (over VPN or direct)
+├─ 1. Run: streamlit run app.py
+├─ 2. Access: http://localhost:8501 (over VPN or direct)
 └─ Audit logs stored locally on encrypted disk
 
 INTERNET-FACING DEPLOYMENT:
@@ -266,7 +238,8 @@ INTERNET-FACING DEPLOYMENT:
 │  ├─ nginx + Let's Encrypt (most control)
 │  ├─ Streamlit Cloud (easiest, verify BAA)
 │  └─ Cloud provider (AWS/Azure/GCP)
-├─ Setup credentials (env_setup.py)
+├─ Add an access-control layer (this app has no login of its own —
+│  reverse-proxy auth, SSO gateway, or a private/VPN-only network)
 ├─ Configure encrypted audit log storage
 ├─ Setup monitoring/alerting
 └─ Document incident response procedures
@@ -290,8 +263,7 @@ See INCIDENT_RESPONSE.md for breach notification and logging procedures.
 
 Before going live, verify:
 
-- [ ] Credentials generated with unique passwords (env_setup.py)
-- [ ] .env not committed to git
+- [ ] Network/infrastructure access control in place (this app has no login)
 - [ ] Audit logs set to 600 permissions
 - [ ] Audit logs on encrypted volume or encrypted filesystem
 - [ ] HTTPS configured (if Internet-facing)
