@@ -15,6 +15,7 @@ from billing_rules import (
     parse_weekday_from_token,
     is_non_billable_service_for_weekday,
     is_professional_claim_type,
+    is_iop_service,
     _is_drug_screen as is_drug_screen,
     ROSANNA_PROFESSIONAL_CAP,
 )
@@ -195,6 +196,9 @@ def assign_staff(ws, date_token: str = None):
       Jasmine.
     - Jasmine also receives Insurance rows that are billable Programming
       (Detox, Residential, PHP, IOP) or e-care for that weekday.
+    - IOP (including Telemed IOP) always goes to Jasmine when billable that
+      weekday, bypassing the professional pool/Rosanna split even if Claim
+      Type is CMS-1500.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM/OP WM Program Level, or Aetna/Humana Detox/Residential)
@@ -293,6 +297,17 @@ def assign_staff(ws, date_token: str = None):
             other_rows.append(row)
             continue
 
+        # IOP (including Telemed IOP) always goes to Jasmine when billable
+        # that weekday, bypassing the professional pool/Rosanna split even
+        # if Claim Type is CMS-1500.
+        if is_iop_service(service):
+            if is_non_billable_service_for_weekday(service, weekday):
+                fixed_staff[row] = "Unable to Bill"
+            else:
+                fixed_staff[row] = "Jasmine"
+            other_rows.append(row)
+            continue
+
         if is_professional_claim_type(claim_type):
             client = str(ws.cell(row, cols['client']).value or "").strip()
             professional_rows.append((row, client))
@@ -328,12 +343,14 @@ def assign_staff(ws, date_token: str = None):
     print("Staff assignment complete")
 
 
-def finalize_workbook(wb, include_batch_billings: bool = False, skip_status_columns: bool = False):
+def finalize_workbook(wb, include_batch_billings: bool = False, include_iop_status: bool = False,
+                      skip_status_columns: bool = False):
     """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
 
     Args:
         wb: Workbook to finalize.
         include_batch_billings: When True, add 'Batch Billings' to the dropdown (Jasmine only).
+        include_iop_status: When True, add 'IOP' to the dropdown (Jasmine only).
         skip_status_columns: When True, skip adding Status/Comments columns (for CB/self-pay).
     """
     ws = wb.active
@@ -356,6 +373,8 @@ def finalize_workbook(wb, include_batch_billings: bool = False, skip_status_colu
                         "Utox Batch", "Inclusive Services"]
         if include_batch_billings:
             status_items.append("Batch Billings")
+        if include_iop_status:
+            status_items.append("IOP")
 
         for idx, item in enumerate(status_items, start=1):
             ws_list[f'A{idx}'] = item
@@ -536,7 +555,8 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                 continue
 
             if staff_name in ("Rosanna", "Jasmine"):
-                finalize_workbook(new_wb, include_batch_billings=(staff_name == "Jasmine"))
+                finalize_workbook(new_wb, include_batch_billings=(staff_name == "Jasmine"),
+                                  include_iop_status=(staff_name == "Jasmine"))
             elif staff_name == "CB":
                 finalize_workbook(new_wb, skip_status_columns=True)
 

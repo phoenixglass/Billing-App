@@ -30,6 +30,9 @@ Rosanna or Jasmine — they are marked Unable to Bill.
 - **Programming** services (Detox, Residential, Partial Hospitalization/PHP, IOP)
   bill Tuesday, Thursday, Friday, and weekends; they are Unable to Bill on Monday
   and Wednesday. All billable Programming rows go to Jasmine.
+- **IOP** (including Telemed IOP) always goes to Jasmine when billable that
+  weekday, bypassing the professional pool/Rosanna split even if Claim Type is
+  CMS-1500.
 - **E-care** bills on Tuesdays only (regardless of Claim Type). Billable e-care
   rows go to Jasmine.
 
@@ -64,6 +67,11 @@ Individual workbooks are generated for **Rosanna**, **Jasmine**, and **CB**
 (empty reports are skipped, e.g. Rosanna on Wednesdays/weekends). All other staff
 (Melissa, Unable to Bill, etc.) are still assigned in the Masters workbook but do
 not receive separate reports.
+
+Rosanna's and Jasmine's reports include a Status column with a dropdown list:
+Billed, Unable to Bill, Contractual Adj, Incomplete Billings, Utox Batch, and
+Inclusive Services. Jasmine's report also includes two Jasmine-only options:
+Batch Billings and IOP.
 
 ### Fallback Behavior
 

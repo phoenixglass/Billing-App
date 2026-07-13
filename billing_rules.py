@@ -23,6 +23,9 @@ Self Pay ever goes to either of them):
   weekday isn't in the map, i.e. Wednesday and weekends); the remainder of
   the pool goes to Jasmine.
 - Jasmine also receives every billable Programming/e-care row.
+- IOP (including Telemed IOP) always goes to Jasmine when billable that
+  weekday, bypassing the professional pool/Rosanna split entirely, even if
+  Claim Type is CMS-1500.
 - GROUPFLD2 values other than "Insurance" or "Self Pay" never reach
   Rosanna or Jasmine.
 """
@@ -75,6 +78,11 @@ def _is_programming_service(service: str) -> bool:
         or "php" in s
         or "iop" in s
     )
+
+
+def is_iop_service(service: str) -> bool:
+    """Return True for any IOP service, including Telemed IOP (case-insensitive)."""
+    return "iop" in (service or "").lower()
 
 
 def is_professional_claim_type(claim_type: str) -> bool:

@@ -23,6 +23,7 @@ from billing_rules import (
     _is_drug_screen,
     _is_ecare,
     _is_programming_service,
+    is_iop_service,
     is_non_billable_service_for_weekday,
     is_professional_claim_type,
     parse_weekday_from_token,
@@ -77,6 +78,20 @@ def test_programming_service_classification():
 
     assert not _is_programming_service('Acupuncture')
     assert not _is_programming_service('Individual Therapy')
+
+
+def test_is_iop_service_variants():
+    """Test that IOP, including Telemed IOP, is recognized regardless of case."""
+    assert is_iop_service('IOP')
+    assert is_iop_service('iop')
+    assert is_iop_service('Telemed IOP')
+    assert is_iop_service('TELEMED IOP')
+    assert is_iop_service('IOP - Group')
+
+    assert not is_iop_service('Detox')
+    assert not is_iop_service('Residential')
+    assert not is_iop_service('')
+    assert not is_iop_service(None)
 
 
 def test_claim_type_professional():
@@ -219,6 +234,9 @@ if __name__ == '__main__':
 
     test_programming_service_classification()
     print("✓ test_programming_service_classification passed")
+
+    test_is_iop_service_variants()
+    print("✓ test_is_iop_service_variants passed")
 
     test_claim_type_professional()
     print("✓ test_claim_type_professional passed")
