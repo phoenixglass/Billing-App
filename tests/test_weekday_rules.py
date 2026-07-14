@@ -3,15 +3,19 @@ Unit tests for the daily billing schedule helpers in billing_rules.py.
 
 Daily billing schedule:
 - Professional (Claim Type CMS-1500) services bill every day of the week.
-- Programming (Detox, Residential, PHP, IOP) bills Tuesday, Thursday,
-  Friday, and weekends; non-billable Monday and Wednesday.
+- Programming (Detox, Residential, IOP) bills Tuesday, Thursday, Friday,
+  and weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
 - Self Pay bills every service every day, with no exceptions.
+- PHP (Partial Hospitalization) always goes to Melissa and isn't governed
+  by this weekday schedule at all.
 
-Rosanna/Jasmine split (Insurance rows only):
-- Rosanna's professional-service row cap by weekday: Monday=300,
-  Tuesday=300, Thursday=125, Friday=125. Wednesday and weekends have no
-  cap (Rosanna gets nothing; Jasmine gets the whole professional pool).
+Rosanna/Joshua/Jasmine split (Insurance rows only):
+- Rosanna's professional-service row cap by weekday: Monday=300 only.
+- Joshua's professional-service row cap by weekday: Tuesday=300,
+  Thursday=125, Friday=125.
+- Wednesday and weekends have no cap for either of them (Jasmine gets the
+  whole professional pool those days).
 """
 import sys
 from pathlib import Path
@@ -25,8 +29,10 @@ from billing_rules import (
     _is_programming_service,
     is_iop_service,
     is_non_billable_service_for_weekday,
+    is_php_service,
     is_professional_claim_type,
     parse_weekday_from_token,
+    JOSHUA_PROFESSIONAL_CAP,
     ROSANNA_PROFESSIONAL_CAP,
 )
 
@@ -68,16 +74,35 @@ def test_drug_screen_variants():
 
 
 def test_programming_service_classification():
-    """Test that Programming services (Detox, Residential, PHP, IOP) are recognized."""
+    """Test that Programming services (Detox, Residential, IOP) are recognized.
+
+    PHP is intentionally excluded: it always goes to Melissa (see
+    is_php_service) rather than following the Programming schedule.
+    """
     assert _is_programming_service('Detox')
     assert _is_programming_service('Residential')
-    assert _is_programming_service('Partial Hospitalization')
-    assert _is_programming_service('PHP')
     assert _is_programming_service('IOP')
     assert _is_programming_service('DETOX SERVICES')
 
+    assert not _is_programming_service('Partial Hospitalization')
+    assert not _is_programming_service('PHP')
     assert not _is_programming_service('Acupuncture')
     assert not _is_programming_service('Individual Therapy')
+
+
+def test_is_php_service_variants():
+    """Test that PHP / Partial Hospitalization is recognized regardless of case."""
+    assert is_php_service('PHP')
+    assert is_php_service('php')
+    assert is_php_service('Partial Hospitalization')
+    assert is_php_service('PARTIAL HOSPITALIZATION')
+    assert is_php_service('Partial Hospitalization - Program')
+
+    assert not is_php_service('Detox')
+    assert not is_php_service('Residential')
+    assert not is_php_service('IOP')
+    assert not is_php_service('')
+    assert not is_php_service(None)
 
 
 def test_is_iop_service_variants():
@@ -119,7 +144,6 @@ def test_monday_and_wednesday_programming_non_billable():
     for weekday in (0, 2):
         assert is_non_billable_service_for_weekday('Detox', weekday)
         assert is_non_billable_service_for_weekday('Residential', weekday)
-        assert is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
         assert is_non_billable_service_for_weekday('IOP', weekday)
         assert is_non_billable_service_for_weekday('e-care', weekday)
         assert is_non_billable_service_for_weekday('extended care', weekday)
@@ -134,7 +158,6 @@ def test_tuesday_programming_and_ecare_billable():
     weekday = 1
     assert not is_non_billable_service_for_weekday('Detox', weekday)
     assert not is_non_billable_service_for_weekday('Residential', weekday)
-    assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
     assert not is_non_billable_service_for_weekday('IOP', weekday)
     assert not is_non_billable_service_for_weekday('e-care', weekday)
     assert not is_non_billable_service_for_weekday('extended care', weekday)
@@ -145,7 +168,6 @@ def test_thursday_friday_programming_billable_no_ecare():
     for weekday in (3, 4):
         assert not is_non_billable_service_for_weekday('Detox', weekday)
         assert not is_non_billable_service_for_weekday('Residential', weekday)
-        assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
         assert not is_non_billable_service_for_weekday('IOP', weekday)
         assert is_non_billable_service_for_weekday('e-care', weekday)
         assert is_non_billable_service_for_weekday('extended care', weekday)
@@ -156,7 +178,6 @@ def test_weekend_programming_billable_no_ecare():
     for weekday in (5, 6):
         assert not is_non_billable_service_for_weekday('Detox', weekday)
         assert not is_non_billable_service_for_weekday('Residential', weekday)
-        assert not is_non_billable_service_for_weekday('Partial Hospitalization', weekday)
         assert not is_non_billable_service_for_weekday('IOP', weekday)
         assert is_non_billable_service_for_weekday('e-care', weekday)
         assert is_non_billable_service_for_weekday('extended care', weekday)
@@ -178,16 +199,29 @@ def test_self_pay_every_service_every_day_no_exceptions():
 
 
 def test_rosanna_professional_cap_by_weekday():
-    """Rosanna's professional cap: Mon/Tue=300, Thu/Fri=125, Wed/weekend=0 (absent)."""
+    """Rosanna's professional cap: Monday=300 only."""
     assert ROSANNA_PROFESSIONAL_CAP[0] == 300  # Monday
-    assert ROSANNA_PROFESSIONAL_CAP[1] == 300  # Tuesday
-    assert ROSANNA_PROFESSIONAL_CAP[3] == 125  # Thursday
-    assert ROSANNA_PROFESSIONAL_CAP[4] == 125  # Friday
 
-    # Wednesday and weekends are intentionally absent -> cap of 0.
+    # Every other day is intentionally absent -> cap of 0.
+    assert ROSANNA_PROFESSIONAL_CAP.get(1, 0) == 0
     assert ROSANNA_PROFESSIONAL_CAP.get(2, 0) == 0
+    assert ROSANNA_PROFESSIONAL_CAP.get(3, 0) == 0
+    assert ROSANNA_PROFESSIONAL_CAP.get(4, 0) == 0
     assert ROSANNA_PROFESSIONAL_CAP.get(5, 0) == 0
     assert ROSANNA_PROFESSIONAL_CAP.get(6, 0) == 0
+
+
+def test_joshua_professional_cap_by_weekday():
+    """Joshua's professional cap: Tue=300, Thu/Fri=125, Mon/Wed/weekend=0 (absent)."""
+    assert JOSHUA_PROFESSIONAL_CAP[1] == 300  # Tuesday
+    assert JOSHUA_PROFESSIONAL_CAP[3] == 125  # Thursday
+    assert JOSHUA_PROFESSIONAL_CAP[4] == 125  # Friday
+
+    # Monday, Wednesday, and weekends are intentionally absent -> cap of 0.
+    assert JOSHUA_PROFESSIONAL_CAP.get(0, 0) == 0
+    assert JOSHUA_PROFESSIONAL_CAP.get(2, 0) == 0
+    assert JOSHUA_PROFESSIONAL_CAP.get(5, 0) == 0
+    assert JOSHUA_PROFESSIONAL_CAP.get(6, 0) == 0
 
 
 def test_parse_weekday_from_token():
@@ -235,6 +269,9 @@ if __name__ == '__main__':
     test_programming_service_classification()
     print("✓ test_programming_service_classification passed")
 
+    test_is_php_service_variants()
+    print("✓ test_is_php_service_variants passed")
+
     test_is_iop_service_variants()
     print("✓ test_is_iop_service_variants passed")
 
@@ -261,6 +298,9 @@ if __name__ == '__main__':
 
     test_rosanna_professional_cap_by_weekday()
     print("✓ test_rosanna_professional_cap_by_weekday passed")
+
+    test_joshua_professional_cap_by_weekday()
+    print("✓ test_joshua_professional_cap_by_weekday passed")
 
     test_parse_weekday_from_token()
     print("✓ test_parse_weekday_from_token passed")

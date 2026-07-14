@@ -16,8 +16,10 @@ from billing_rules import (
     is_non_billable_service_for_weekday,
     is_professional_claim_type,
     is_iop_service,
+    is_php_service,
     _is_drug_screen as is_drug_screen,
     ROSANNA_PROFESSIONAL_CAP,
+    JOSHUA_PROFESSIONAL_CAP,
 )
 
 try:
@@ -188,22 +190,28 @@ def assign_staff(ws, date_token: str = None):
 
     - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
       bills every day, with no exceptions.
-    - Jasmine and Rosanna only ever receive GROUPFLD2 == "Insurance" rows.
+    - Jasmine, Rosanna, and Joshua only ever receive GROUPFLD2 ==
+      "Insurance" rows.
     - Among Insurance rows, the "professional pool" is every row whose
-      Claim Type is CMS-1500, sorted alphabetically by Client. Rosanna
-      receives the first ROSANNA_PROFESSIONAL_CAP[weekday] of that sorted
-      pool (0 on Wednesdays/weekends); the rest of the pool goes to
+      Claim Type is CMS-1500, sorted alphabetically by Client. On Monday,
+      Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday] of that
+      sorted pool; on Tuesday/Thursday/Friday, Joshua receives the first
+      JOSHUA_PROFESSIONAL_CAP[weekday] instead (0 on Wednesdays/weekends,
+      so nobody caps the pool those days); the rest of the pool goes to
       Jasmine.
     - Jasmine also receives Insurance rows that are billable Programming
-      (Detox, Residential, PHP, IOP) or e-care for that weekday.
+      (Detox, Residential, IOP) or e-care for that weekday.
     - IOP (including Telemed IOP) always goes to Jasmine when billable that
-      weekday, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500.
+      weekday, bypassing the professional pool/Rosanna/Joshua split even if
+      Claim Type is CMS-1500.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
-    - Melissa (WM/OP WM Program Level, or Aetna/Humana Detox/Residential)
-      and the O'Flynn Karen OP Chappaqua/OP NYC "Unable to Bill" rule take
-      priority over all of the above.
+    - Melissa (WM/OP WM Program Level, PHP/Partial Hospitalization, or
+      Aetna/Humana Detox/Residential) and the O'Flynn Karen OP
+      Chappaqua/OP NYC "Unable to Bill" rule take priority over all of the
+      above. PHP rows are assigned to Melissa every day in the Masters
+      spreadsheet; she does not get an individual report, and PHP is
+      billed only on Tuesdays as an operational matter.
 
     Args:
         ws: Worksheet to process
@@ -243,10 +251,17 @@ def assign_staff(ws, date_token: str = None):
         print(f"Using date from filename: {date_token} (weekday={weekday})")
 
     rosanna_cap = ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
+    joshua_cap = JOSHUA_PROFESSIONAL_CAP.get(weekday, 0)
+    if rosanna_cap:
+        capped_staff, professional_cap = "Rosanna", rosanna_cap
+    elif joshua_cap:
+        capped_staff, professional_cap = "Joshua", joshua_cap
+    else:
+        capped_staff, professional_cap = None, 0
 
     row_data_map = {}
     fixed_staff = {}        # original_row -> staff already decided
-    professional_rows = []  # (original_row, client) still needing the Rosanna/Jasmine split
+    professional_rows = []  # (original_row, client) still needing the capped-staff/Jasmine split
     other_rows = []         # original_row order for every row not in the professional pool
 
     for row in range(2, ws.max_row + 1):
@@ -286,20 +301,24 @@ def assign_staff(ws, date_token: str = None):
             if has_detox_res and has_insurance and not is_drug_screen(service):
                 staff = "Melissa"
 
+        # PHP/Partial Hospitalization always goes to Melissa, every day.
+        if not staff and is_php_service(service):
+            staff = "Melissa"
+
         if staff:
             fixed_staff[row] = staff
             other_rows.append(row)
             continue
 
-        # Jasmine and Rosanna only ever receive Insurance rows.
+        # Jasmine, Rosanna, and Joshua only ever receive Insurance rows.
         if group != "Insurance":
             fixed_staff[row] = "Unable to Bill"
             other_rows.append(row)
             continue
 
         # IOP (including Telemed IOP) always goes to Jasmine when billable
-        # that weekday, bypassing the professional pool/Rosanna split even
-        # if Claim Type is CMS-1500.
+        # that weekday, bypassing the professional pool/Rosanna/Joshua split
+        # even if Claim Type is CMS-1500.
         if is_iop_service(service):
             if is_non_billable_service_for_weekday(service, weekday):
                 fixed_staff[row] = "Unable to Bill"
@@ -331,10 +350,10 @@ def assign_staff(ws, date_token: str = None):
             ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
         new_row_pos += 1
 
-    num_rosanna = min(rosanna_cap, len(professional_rows))
+    num_capped = min(professional_cap, len(professional_rows))
     new_row_pos = 2
     for idx in range(len(professional_rows)):
-        ws.cell(new_row_pos, 1).value = "Rosanna" if idx < num_rosanna else "Jasmine"
+        ws.cell(new_row_pos, 1).value = capped_staff if (capped_staff and idx < num_capped) else "Jasmine"
         new_row_pos += 1
     for original_row in other_rows:
         ws.cell(new_row_pos, 1).value = fixed_staff[original_row]
@@ -345,7 +364,7 @@ def assign_staff(ws, date_token: str = None):
 
 def finalize_workbook(wb, include_batch_billings: bool = False, include_iop_status: bool = False,
                       skip_status_columns: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
+    """Add Status/Comments columns and validation for Rosanna/Joshua/Jasmine exports.
 
     Args:
         wb: Workbook to finalize.
@@ -505,9 +524,10 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                 if is_wm_program_level(pl):
                     wm_count += 1
 
-        # Rosanna, Jasmine, and CB always get individual reports (empty ones
-        # are skipped below). Melissa, Unable to Bill, etc. stay Masters-only.
-        for staff_name in ["Rosanna", "Jasmine", "CB"]:
+        # Rosanna, Joshua, Jasmine, and CB always get individual reports
+        # (empty ones are skipped below). Melissa, Unable to Bill, etc. stay
+        # Masters-only.
+        for staff_name in ["Rosanna", "Joshua", "Jasmine", "CB"]:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
@@ -554,7 +574,7 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
             if new_row == 2:
                 continue
 
-            if staff_name in ("Rosanna", "Jasmine"):
+            if staff_name in ("Rosanna", "Joshua", "Jasmine"):
                 finalize_workbook(new_wb, include_batch_billings=(staff_name == "Jasmine"),
                                   include_iop_status=(staff_name == "Jasmine"))
             elif staff_name == "CB":
@@ -598,9 +618,11 @@ if uploaded_file is not None:
 st.markdown(
     "Staff assignment now follows the standard daily schedule automatically, based on "
     "the date in the filename: Self Pay always bills every day to **CB**; for Insurance "
-    "rows, **Rosanna** gets the day's capped number of Professional (Claim Type CMS-1500) "
-    "services sorted alphabetically by Client, and **Jasmine** gets the remaining "
-    "Professional rows plus any billable Programming/e-care rows for that day."
+    "rows, **Rosanna** (Mondays) or **Joshua** (Tuesdays, Thursdays, Fridays) gets the "
+    "day's capped number of Professional (Claim Type CMS-1500) services sorted "
+    "alphabetically by Client, and **Jasmine** gets the remaining Professional rows plus "
+    "any billable Programming/e-care rows for that day. PHP rows always go to **Melissa** "
+    "in the Masters report (no individual report is generated for her)."
 )
 
 exclude_optum = st.checkbox(

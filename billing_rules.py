@@ -8,37 +8,49 @@ Weekday mapping: 0=Monday, 1=Tuesday, ..., 6=Sunday
 
 Daily billing schedule:
 - Professional services (Claim Type "CMS-1500") bill every day of the week.
-- Programming (Detox, Residential, Partial Hospitalization/PHP, IOP) bills
-  Tuesday, Thursday, Friday, and weekends; non-billable Monday and
-  Wednesday.
+- Programming (Detox, Residential, IOP) bills Tuesday, Thursday, Friday,
+  and weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
 - Self Pay: every service bills every day, with no exceptions (including
   e-care).
+- PHP (Partial Hospitalization) is not part of the Programming schedule
+  above: it always goes to Melissa (see is_php_service), and is billed
+  only on Tuesdays as a real-world/manual matter, not something this
+  module's weekday helpers gate.
 
-Rosanna/Jasmine split (applies to GROUPFLD2 == "Insurance" rows only; no
-Self Pay ever goes to either of them):
+Rosanna/Joshua/Jasmine split (applies to GROUPFLD2 == "Insurance" rows
+only; no Self Pay ever goes to any of them, and PHP rows never reach them
+since PHP always goes to Melissa):
 - The "professional pool" is every Insurance row whose Claim Type is
-  CMS-1500, sorted alphabetically by Client. Rosanna receives the first
-  ROSANNA_PROFESSIONAL_CAP[weekday] rows of that sorted pool (0 if the
-  weekday isn't in the map, i.e. Wednesday and weekends); the remainder of
-  the pool goes to Jasmine.
+  CMS-1500, sorted alphabetically by Client. On Monday, Rosanna receives
+  the first ROSANNA_PROFESSIONAL_CAP[weekday] rows of that sorted pool. On
+  Tuesday, Thursday, and Friday, Joshua receives the first
+  JOSHUA_PROFESSIONAL_CAP[weekday] rows instead. On Wednesday and
+  weekends neither caps any rows, so the entire pool goes to Jasmine.
+  Anything past the capped staff member's share of the pool goes to
+  Jasmine.
 - Jasmine also receives every billable Programming/e-care row.
 - IOP (including Telemed IOP) always goes to Jasmine when billable that
-  weekday, bypassing the professional pool/Rosanna split entirely, even if
-  Claim Type is CMS-1500.
+  weekday, bypassing the professional pool/Rosanna/Joshua split entirely,
+  even if Claim Type is CMS-1500.
 - GROUPFLD2 values other than "Insurance" or "Self Pay" never reach
-  Rosanna or Jasmine.
+  Rosanna, Joshua, or Jasmine.
 """
 from datetime import datetime
 from typing import Tuple
 
 
 DRUG_SCREEN_KEYWORDS = ("drug screen", "utox", "urine tox", "drug test", "uds")
+PHP_KEYWORDS = ("partial hospitalization", "php")
 
 # Rosanna's professional-service row cap by weekday (0=Monday..6=Sunday).
-# Wednesday (2) and weekends (5, 6) are intentionally absent: Rosanna
-# receives no rows those days and Jasmine gets the entire professional pool.
-ROSANNA_PROFESSIONAL_CAP = {0: 300, 1: 300, 3: 125, 4: 125}
+# Rosanna only works Monday; every other day she receives no rows.
+ROSANNA_PROFESSIONAL_CAP = {0: 300}
+
+# Joshua's professional-service row cap by weekday (0=Monday..6=Sunday).
+# Tuesday (1) and Thursday/Friday (3, 4) are the only days Joshua caps the
+# professional pool; every other day he receives no rows.
+JOSHUA_PROFESSIONAL_CAP = {1: 300, 3: 125, 4: 125}
 
 
 def parse_weekday_from_token(date_token: str) -> Tuple[int, bool]:
@@ -68,14 +80,22 @@ def _is_drug_screen(service: str) -> bool:
     return any(kw in s for kw in DRUG_SCREEN_KEYWORDS)
 
 
+def is_php_service(service: str) -> bool:
+    """Return True for PHP/Partial Hospitalization services (always Melissa's)."""
+    s = (service or "").lower()
+    return any(kw in s for kw in PHP_KEYWORDS)
+
+
 def _is_programming_service(service: str) -> bool:
-    """Return True for Programming services: Detox, Residential, PHP, IOP."""
+    """Return True for Programming services: Detox, Residential, IOP.
+
+    PHP is intentionally excluded: it's always assigned to Melissa
+    (see is_php_service) rather than following this weekday schedule.
+    """
     s = service.lower()
     return (
         "detox" in s
         or "residential" in s
-        or "partial hospitalization" in s
-        or "php" in s
         or "iop" in s
     )
 
