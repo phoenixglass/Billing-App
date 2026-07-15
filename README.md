@@ -28,12 +28,12 @@ Pay" never reach Rosanna, Joshua, or Jasmine — they are marked Unable to Bill.
   receives the first N rows of that sorted pool per the weekday cap below; on
   Tuesday, Thursday, and Friday, Joshua receives the first N rows instead. The
   rest of the pool (and all of it on Wednesday/weekends) goes to Jasmine.
-- **Programming** services (Detox, Residential, IOP) bill Tuesday, Thursday,
+- **Programming** services (Detox, Residential) bill Tuesday, Thursday,
   Friday, and weekends; they are Unable to Bill on Monday and Wednesday. All
   billable Programming rows go to Jasmine.
-- **IOP** (including Telemed IOP) always goes to Jasmine when billable that
-  weekday, bypassing the professional pool/Rosanna/Joshua split even if Claim
-  Type is CMS-1500.
+- **IOP** (including Telemed IOP) bills every day of the week, with no
+  exceptions, and always goes to Jasmine, bypassing the professional
+  pool/Rosanna/Joshua split even if Claim Type is CMS-1500.
 - **E-care** bills on Tuesdays only (regardless of Claim Type). Billable e-care
   rows go to Jasmine.
 - **PHP** (Partial Hospitalization) always goes to **Melissa**, every day — see
