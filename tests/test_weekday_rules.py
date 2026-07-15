@@ -3,8 +3,10 @@ Unit tests for the daily billing schedule helpers in billing_rules.py.
 
 Daily billing schedule:
 - Professional (Claim Type CMS-1500) services bill every day of the week.
-- Programming (Detox, Residential, IOP) bills Tuesday, Thursday, Friday,
-  and weekends; non-billable Monday and Wednesday.
+- IOP (including Telemed IOP) bills every day of the week, with no
+  exceptions.
+- Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
+  weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
 - Self Pay bills every service every day, with no exceptions.
 - PHP (Partial Hospitalization) always goes to Melissa and isn't governed
@@ -74,16 +76,18 @@ def test_drug_screen_variants():
 
 
 def test_programming_service_classification():
-    """Test that Programming services (Detox, Residential, IOP) are recognized.
+    """Test that Programming services (Detox, Residential) are recognized.
 
-    PHP is intentionally excluded: it always goes to Melissa (see
-    is_php_service) rather than following the Programming schedule.
+    IOP is intentionally excluded: it bills every day of the week (see
+    is_iop_service) rather than following the Programming schedule. PHP is
+    also excluded: it always goes to Melissa (see is_php_service) rather
+    than following the Programming schedule.
     """
     assert _is_programming_service('Detox')
     assert _is_programming_service('Residential')
-    assert _is_programming_service('IOP')
     assert _is_programming_service('DETOX SERVICES')
 
+    assert not _is_programming_service('IOP')
     assert not _is_programming_service('Partial Hospitalization')
     assert not _is_programming_service('PHP')
     assert not _is_programming_service('Acupuncture')
@@ -140,11 +144,11 @@ def test_professional_bills_every_day():
 
 
 def test_monday_and_wednesday_programming_non_billable():
-    """Monday and Wednesday: Programming and e-care are non-billable."""
+    """Monday and Wednesday: Programming and e-care are non-billable, but IOP is billable."""
     for weekday in (0, 2):
         assert is_non_billable_service_for_weekday('Detox', weekday)
         assert is_non_billable_service_for_weekday('Residential', weekday)
-        assert is_non_billable_service_for_weekday('IOP', weekday)
+        assert not is_non_billable_service_for_weekday('IOP', weekday)
         assert is_non_billable_service_for_weekday('e-care', weekday)
         assert is_non_billable_service_for_weekday('extended care', weekday)
 
@@ -181,6 +185,14 @@ def test_weekend_programming_billable_no_ecare():
         assert not is_non_billable_service_for_weekday('IOP', weekday)
         assert is_non_billable_service_for_weekday('e-care', weekday)
         assert is_non_billable_service_for_weekday('extended care', weekday)
+
+
+def test_iop_billable_every_day():
+    """IOP (including Telemed IOP) is billable every day of the week, no exceptions."""
+    for weekday in range(7):
+        assert not is_non_billable_service_for_weekday('IOP', weekday)
+        assert not is_non_billable_service_for_weekday('Telemed IOP', weekday)
+        assert not is_non_billable_service_for_weekday('IOP - Group', weekday)
 
 
 def test_self_pay_every_service_every_day_no_exceptions():
@@ -255,8 +267,8 @@ def test_case_insensitive_matching():
     assert is_non_billable_service_for_weekday('PARTIAL HOSPITALIZATION', weekday)
     assert is_non_billable_service_for_weekday('partial hospitalization', weekday)
 
-    assert is_non_billable_service_for_weekday('iop', weekday)
-    assert is_non_billable_service_for_weekday('IOP', weekday)
+    assert not is_non_billable_service_for_weekday('iop', weekday)
+    assert not is_non_billable_service_for_weekday('IOP', weekday)
 
 
 if __name__ == '__main__':
@@ -292,6 +304,9 @@ if __name__ == '__main__':
 
     test_weekend_programming_billable_no_ecare()
     print("✓ test_weekend_programming_billable_no_ecare passed")
+
+    test_iop_billable_every_day()
+    print("✓ test_iop_billable_every_day passed")
 
     test_self_pay_every_service_every_day_no_exceptions()
     print("✓ test_self_pay_every_service_every_day_no_exceptions passed")

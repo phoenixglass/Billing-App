@@ -200,9 +200,9 @@ def assign_staff(ws, date_token: str = None):
       so nobody caps the pool those days); the rest of the pool goes to
       Jasmine.
     - Jasmine also receives Insurance rows that are billable Programming
-      (Detox, Residential, IOP) or e-care for that weekday.
-    - IOP (including Telemed IOP) always goes to Jasmine when billable that
-      weekday, bypassing the professional pool/Rosanna/Joshua split even if
+      (Detox, Residential) or e-care for that weekday.
+    - IOP (including Telemed IOP) always goes to Jasmine, every day of the
+      week, bypassing the professional pool/Rosanna/Joshua split even if
       Claim Type is CMS-1500.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
@@ -316,14 +316,11 @@ def assign_staff(ws, date_token: str = None):
             other_rows.append(row)
             continue
 
-        # IOP (including Telemed IOP) always goes to Jasmine when billable
-        # that weekday, bypassing the professional pool/Rosanna/Joshua split
+        # IOP (including Telemed IOP) always goes to Jasmine, every day of
+        # the week, bypassing the professional pool/Rosanna/Joshua split
         # even if Claim Type is CMS-1500.
         if is_iop_service(service):
-            if is_non_billable_service_for_weekday(service, weekday):
-                fixed_staff[row] = "Unable to Bill"
-            else:
-                fixed_staff[row] = "Jasmine"
+            fixed_staff[row] = "Jasmine"
             other_rows.append(row)
             continue
 

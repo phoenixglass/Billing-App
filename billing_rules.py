@@ -8,8 +8,10 @@ Weekday mapping: 0=Monday, 1=Tuesday, ..., 6=Sunday
 
 Daily billing schedule:
 - Professional services (Claim Type "CMS-1500") bill every day of the week.
-- Programming (Detox, Residential, IOP) bills Tuesday, Thursday, Friday,
-  and weekends; non-billable Monday and Wednesday.
+- IOP (including Telemed IOP) bills every day of the week, with no
+  exceptions.
+- Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
+  weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
 - Self Pay: every service bills every day, with no exceptions (including
   e-care).
@@ -30,8 +32,8 @@ since PHP always goes to Melissa):
   Anything past the capped staff member's share of the pool goes to
   Jasmine.
 - Jasmine also receives every billable Programming/e-care row.
-- IOP (including Telemed IOP) always goes to Jasmine when billable that
-  weekday, bypassing the professional pool/Rosanna/Joshua split entirely,
+- IOP (including Telemed IOP) always goes to Jasmine, every day of the
+  week, bypassing the professional pool/Rosanna/Joshua split entirely,
   even if Claim Type is CMS-1500.
 - GROUPFLD2 values other than "Insurance" or "Self Pay" never reach
   Rosanna, Joshua, or Jasmine.
@@ -87,16 +89,17 @@ def is_php_service(service: str) -> bool:
 
 
 def _is_programming_service(service: str) -> bool:
-    """Return True for Programming services: Detox, Residential, IOP.
+    """Return True for Programming services: Detox, Residential.
 
-    PHP is intentionally excluded: it's always assigned to Melissa
-    (see is_php_service) rather than following this weekday schedule.
+    IOP is intentionally excluded here: it bills every day of the week
+    (see is_iop_service) rather than following this weekday schedule.
+    PHP is also excluded: it's always assigned to Melissa (see
+    is_php_service) rather than following this weekday schedule.
     """
     s = service.lower()
     return (
         "detox" in s
         or "residential" in s
-        or "iop" in s
     )
 
 
@@ -138,7 +141,11 @@ def is_non_billable_service_for_weekday(
     if _is_ecare(s):
         return weekday != 1
 
-    # Programming (Detox, Residential, PHP, IOP) bills Tue/Thu/Fri + weekends.
+    # IOP (including Telemed IOP) bills every day of the week.
+    if is_iop_service(s):
+        return False
+
+    # Programming (Detox, Residential) bills Tue/Thu/Fri + weekends.
     if _is_programming_service(s):
         return weekday not in (1, 3, 4, 5, 6)
 
