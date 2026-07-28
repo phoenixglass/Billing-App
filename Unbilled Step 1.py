@@ -116,18 +116,18 @@ def assign_staff(ws, date_token: str = None):
       bills every day, with no exceptions.
     - Jasmine and Rosanna only ever receive GROUPFLD2 == "Insurance" rows.
     - Among Insurance rows, the "professional pool" is every row whose
-      Claim Type is CMS-1500, sorted alphabetically by Client. Monday
-      through Friday, Rosanna receives the first
-      ROSANNA_PROFESSIONAL_CAP[weekday] (150) of that sorted pool; the
-      rest of the pool goes to Jasmine. Rosanna caps no rows on weekends,
-      so Jasmine gets the whole pool those days.
+      Claim Type is CMS-1500 or UB-04 (UB-04 counts as Professional every
+      day), sorted alphabetically by Client. Monday through Friday,
+      Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday] (150)
+      of that sorted pool; the rest of the pool goes to Jasmine. Rosanna
+      caps no rows on weekends, so Jasmine gets the whole pool those days.
     - Jasmine also receives Insurance rows that are billable Programming
       (Detox, Residential) or e-care for that weekday, as well as any
-      other billable Insurance row whose Claim Type is not CMS-1500 (i.e.
-      institutional/837I), unless it's PHP (always Melissa's).
+      other billable Insurance row whose Claim Type is not CMS-1500/UB-04
+      (i.e. institutional/837I), unless it's PHP (always Melissa's).
     - IOP (including Telemed IOP) always goes to Jasmine, every day of the
       week, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500.
+      Type is CMS-1500 or UB-04.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM Program Level, PHP/Partial Hospitalization, or
@@ -226,7 +226,7 @@ def assign_staff(ws, date_token: str = None):
 
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
         # the week, bypassing the professional pool/Rosanna split even if
-        # Claim Type is CMS-1500.
+        # Claim Type is CMS-1500 or UB-04.
         if is_iop_service(service):
             fixed_staff[row] = "Jasmine"
             other_rows.append(row)

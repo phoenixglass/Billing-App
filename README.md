@@ -23,21 +23,22 @@ service bills every day of the week, with no exceptions (including e-care).
 reach Rosanna or Jasmine — they are marked Unable to Bill.
 
 - **Professional** services (identified by the `Claim Type` column equal to
-  `CMS-1500`) bill every day of the week. The Insurance + CMS-1500 rows ("the
-  professional pool") are sorted alphabetically by `Client`. Monday through
-  Friday, Rosanna receives the first 150 rows of that sorted pool; the rest of
-  the pool goes to Jasmine. Rosanna caps no rows on weekends, so Jasmine gets
+  `CMS-1500` or `UB-04` — UB-04 counts as Professional every day) bill every
+  day of the week. The Insurance + CMS-1500/UB-04 rows ("the professional
+  pool") are sorted alphabetically by `Client`. Monday through Friday,
+  Rosanna receives the first 150 rows of that sorted pool; the rest of the
+  pool goes to Jasmine. Rosanna caps no rows on weekends, so Jasmine gets
   the whole pool those days.
 - **Programming** services (Detox, Residential) bill Tuesday, Thursday,
   Friday, and weekends; they are Unable to Bill on Monday and Wednesday. All
   billable Programming rows go to Jasmine.
 - **IOP** (including Telemed IOP) bills every day of the week, with no
   exceptions, and always goes to Jasmine, bypassing the professional
-  pool/Rosanna split even if Claim Type is CMS-1500.
+  pool/Rosanna split even if Claim Type is CMS-1500 or UB-04.
 - **E-care** bills on Tuesdays only (regardless of Claim Type). Billable e-care
   rows go to Jasmine.
-- Any other billable Insurance row whose Claim Type is not CMS-1500 (i.e.
-  institutional/837I) goes to Jasmine, unless it's PHP (always Melissa's).
+- Any other billable Insurance row whose Claim Type is not CMS-1500/UB-04
+  (i.e. institutional/837I) goes to Jasmine, unless it's PHP (always Melissa's).
 - **PHP** (Partial Hospitalization) always goes to **Melissa**, every day — see
   the Melissa section below. It is not part of the Programming bucket above and
   never reaches Rosanna or Jasmine.

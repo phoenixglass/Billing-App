@@ -2,7 +2,8 @@
 Unit tests for the daily billing schedule helpers in billing_rules.py.
 
 Daily billing schedule:
-- Professional (Claim Type CMS-1500) services bill every day of the week.
+- Professional (Claim Type CMS-1500 or UB-04) services bill every day of
+  the week.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
 - Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
@@ -122,12 +123,16 @@ def test_is_iop_service_variants():
 
 
 def test_claim_type_professional():
-    """Only Claim Type == CMS-1500 (case/whitespace-insensitive) is Professional."""
+    """Claim Type CMS-1500 or UB-04 (case/whitespace-insensitive) is Professional."""
     assert is_professional_claim_type('CMS-1500')
     assert is_professional_claim_type('cms-1500')
     assert is_professional_claim_type('  CMS-1500  ')
 
-    assert not is_professional_claim_type('UB-04')
+    assert is_professional_claim_type('UB-04')
+    assert is_professional_claim_type('ub-04')
+    assert is_professional_claim_type('  UB-04  ')
+
+    assert not is_professional_claim_type('837I')
     assert not is_professional_claim_type('')
     assert not is_professional_claim_type(None)
 

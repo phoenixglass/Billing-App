@@ -2,12 +2,13 @@
 Helper functions to:
 - parse MMDDYYYY date tokens into weekday
 - determine whether a given service is non-billable for a given weekday
-- classify a "Claim Type" value as Professional (CMS-1500)
+- classify a "Claim Type" value as Professional (CMS-1500 or UB-04)
 
 Weekday mapping: 0=Monday, 1=Tuesday, ..., 6=Sunday
 
 Daily billing schedule:
-- Professional services (Claim Type "CMS-1500") bill every day of the week.
+- Professional services (Claim Type "CMS-1500" or "UB-04" — UB-04 counts as
+  Professional every day of the week) bill every day of the week.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
 - Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
@@ -24,17 +25,17 @@ Rosanna/Jasmine split (applies to GROUPFLD2 == "Insurance" rows only; no
 Self Pay ever goes to either of them, and PHP rows never reach them since
 PHP always goes to Melissa):
 - The "professional pool" is every Insurance row whose Claim Type is
-  CMS-1500, sorted alphabetically by Client. Monday through Friday,
-  Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday] rows (150)
-  of that sorted pool; anything past her share of the pool goes to
-  Jasmine. Rosanna caps no rows on weekends, so the entire pool goes to
-  Jasmine those days.
+  CMS-1500 or UB-04, sorted alphabetically by Client. Monday through
+  Friday, Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday]
+  rows (150) of that sorted pool; anything past her share of the pool
+  goes to Jasmine. Rosanna caps no rows on weekends, so the entire pool
+  goes to Jasmine those days.
 - Jasmine also receives every billable Programming/e-care row, plus any
-  other billable Insurance row whose Claim Type is not CMS-1500 (i.e.
-  institutional/837I), unless it's PHP (always Melissa's).
+  other billable Insurance row whose Claim Type is not CMS-1500/UB-04
+  (i.e. institutional/837I), unless it's PHP (always Melissa's).
 - IOP (including Telemed IOP) always goes to Jasmine, every day of the
   week, bypassing the professional pool/Rosanna split entirely, even if
-  Claim Type is CMS-1500.
+  Claim Type is CMS-1500 or UB-04.
 - GROUPFLD2 values other than "Insurance" or "Self Pay" never reach
   Rosanna or Jasmine.
 """
@@ -105,8 +106,11 @@ def is_iop_service(service: str) -> bool:
 
 
 def is_professional_claim_type(claim_type: str) -> bool:
-    """Return True if the Claim Type column value is CMS-1500 (Professional)."""
-    return (claim_type or "").strip().upper() == "CMS-1500"
+    """Return True if the Claim Type column value is CMS-1500 or UB-04 (Professional).
+
+    UB-04 counts as Professional every day of the week, alongside CMS-1500.
+    """
+    return (claim_type or "").strip().upper() in ("CMS-1500", "UB-04")
 
 
 def is_non_billable_service_for_weekday(
@@ -118,8 +122,8 @@ def is_non_billable_service_for_weekday(
 
     - service: original service string (case-insensitive checks will be used)
     - weekday: 0=Monday .. 6=Sunday
-    - is_professional: True when the row's Claim Type is CMS-1500. Professional
-      rows bill every day of the week.
+    - is_professional: True when the row's Claim Type is CMS-1500 or UB-04.
+      Professional rows bill every day of the week.
     - self_pay: when True, every service is billable every day, with no
       exceptions (including e-care).
     """
