@@ -20,23 +20,23 @@ Daily billing schedule:
   only on Tuesdays as a real-world/manual matter, not something this
   module's weekday helpers gate.
 
-Rosanna/Joshua/Jasmine split (applies to GROUPFLD2 == "Insurance" rows
-only; no Self Pay ever goes to any of them, and PHP rows never reach them
-since PHP always goes to Melissa):
+Rosanna/Jasmine split (applies to GROUPFLD2 == "Insurance" rows only; no
+Self Pay ever goes to either of them, and PHP rows never reach them since
+PHP always goes to Melissa):
 - The "professional pool" is every Insurance row whose Claim Type is
-  CMS-1500, sorted alphabetically by Client. On Monday, Rosanna receives
-  the first ROSANNA_PROFESSIONAL_CAP[weekday] rows of that sorted pool. On
-  Tuesday, Thursday, and Friday, Joshua receives the first
-  JOSHUA_PROFESSIONAL_CAP[weekday] rows instead. On Wednesday and
-  weekends neither caps any rows, so the entire pool goes to Jasmine.
-  Anything past the capped staff member's share of the pool goes to
-  Jasmine.
-- Jasmine also receives every billable Programming/e-care row.
+  CMS-1500, sorted alphabetically by Client. Monday through Friday,
+  Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday] rows (150)
+  of that sorted pool; anything past her share of the pool goes to
+  Jasmine. Rosanna caps no rows on weekends, so the entire pool goes to
+  Jasmine those days.
+- Jasmine also receives every billable Programming/e-care row, plus any
+  other billable Insurance row whose Claim Type is not CMS-1500 (i.e.
+  institutional/837I), unless it's PHP (always Melissa's).
 - IOP (including Telemed IOP) always goes to Jasmine, every day of the
-  week, bypassing the professional pool/Rosanna/Joshua split entirely,
-  even if Claim Type is CMS-1500.
+  week, bypassing the professional pool/Rosanna split entirely, even if
+  Claim Type is CMS-1500.
 - GROUPFLD2 values other than "Insurance" or "Self Pay" never reach
-  Rosanna, Joshua, or Jasmine.
+  Rosanna or Jasmine.
 """
 from datetime import datetime
 from typing import Tuple
@@ -46,13 +46,9 @@ DRUG_SCREEN_KEYWORDS = ("drug screen", "utox", "urine tox", "drug test", "uds")
 PHP_KEYWORDS = ("partial hospitalization", "php")
 
 # Rosanna's professional-service row cap by weekday (0=Monday..6=Sunday).
-# Rosanna only works Monday; every other day she receives no rows.
-ROSANNA_PROFESSIONAL_CAP = {0: 300}
-
-# Joshua's professional-service row cap by weekday (0=Monday..6=Sunday).
-# Tuesday (1) and Thursday/Friday (3, 4) are the only days Joshua caps the
-# professional pool; every other day he receives no rows.
-JOSHUA_PROFESSIONAL_CAP = {1: 300, 3: 125, 4: 125}
+# Rosanna works Monday through Friday, capped at 150 rows/day; she receives
+# no rows on weekends.
+ROSANNA_PROFESSIONAL_CAP = {0: 150, 1: 150, 2: 150, 3: 150, 4: 150}
 
 
 def parse_weekday_from_token(date_token: str) -> Tuple[int, bool]:

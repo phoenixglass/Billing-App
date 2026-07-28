@@ -13,7 +13,6 @@ from billing_rules import (
     is_php_service,
     _is_drug_screen as is_drug_screen,
     ROSANNA_PROFESSIONAL_CAP,
-    JOSHUA_PROFESSIONAL_CAP,
 )
 
 stubs_required = False  # no Streamlit in the standalone script; keep for parity if needed
@@ -115,20 +114,20 @@ def assign_staff(ws, date_token: str = None):
 
     - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
       bills every day, with no exceptions.
-    - Jasmine, Rosanna, and Joshua only ever receive GROUPFLD2 ==
-      "Insurance" rows.
+    - Jasmine and Rosanna only ever receive GROUPFLD2 == "Insurance" rows.
     - Among Insurance rows, the "professional pool" is every row whose
-      Claim Type is CMS-1500, sorted alphabetically by Client. On Monday,
-      Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday] of that
-      sorted pool; on Tuesday/Thursday/Friday, Joshua receives the first
-      JOSHUA_PROFESSIONAL_CAP[weekday] instead (0 on Wednesdays/weekends,
-      so nobody caps the pool those days); the rest of the pool goes to
-      Jasmine.
+      Claim Type is CMS-1500, sorted alphabetically by Client. Monday
+      through Friday, Rosanna receives the first
+      ROSANNA_PROFESSIONAL_CAP[weekday] (150) of that sorted pool; the
+      rest of the pool goes to Jasmine. Rosanna caps no rows on weekends,
+      so Jasmine gets the whole pool those days.
     - Jasmine also receives Insurance rows that are billable Programming
-      (Detox, Residential) or e-care for that weekday.
+      (Detox, Residential) or e-care for that weekday, as well as any
+      other billable Insurance row whose Claim Type is not CMS-1500 (i.e.
+      institutional/837I), unless it's PHP (always Melissa's).
     - IOP (including Telemed IOP) always goes to Jasmine, every day of the
-      week, bypassing the professional pool/Rosanna/Joshua split even if
-      Claim Type is CMS-1500.
+      week, bypassing the professional pool/Rosanna split even if Claim
+      Type is CMS-1500.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM Program Level, PHP/Partial Hospitalization, or
@@ -171,11 +170,8 @@ def assign_staff(ws, date_token: str = None):
         print(f"Using date from filename: {date_token} (weekday={weekday})")
 
     rosanna_cap = ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
-    joshua_cap = JOSHUA_PROFESSIONAL_CAP.get(weekday, 0)
     if rosanna_cap:
         capped_staff, professional_cap = "Rosanna", rosanna_cap
-    elif joshua_cap:
-        capped_staff, professional_cap = "Joshua", joshua_cap
     else:
         capped_staff, professional_cap = None, 0
 
@@ -229,8 +225,8 @@ def assign_staff(ws, date_token: str = None):
             continue
 
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
-        # the week, bypassing the professional pool/Rosanna/Joshua split
-        # even if Claim Type is CMS-1500.
+        # the week, bypassing the professional pool/Rosanna split even if
+        # Claim Type is CMS-1500.
         if is_iop_service(service):
             fixed_staff[row] = "Jasmine"
             other_rows.append(row)
@@ -268,7 +264,7 @@ def assign_staff(ws, date_token: str = None):
     print("Staff assignment complete")
 
 def finalize_workbook(wb, include_iop_status: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Joshua/Jasmine exports"""
+    """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
     ws = wb.active
 
     # Insert two columns at E
@@ -299,11 +295,11 @@ def finalize_workbook(wb, include_iop_status: bool = False):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
 def export_staff_workbooks(wb, wb_path, date_token):
-    """Export separate workbooks for Rosanna, Joshua, Jasmine, and CB.
+    """Export separate workbooks for Rosanna, Jasmine, and CB.
 
     All staff (Melissa, Unable to Bill, etc.) are still assigned in the
-    Masters workbook, but only Rosanna, Joshua, Jasmine, and CB receive
-    individual reports.
+    Masters workbook, but only Rosanna, Jasmine, and CB receive individual
+    reports.
     """
 
     ws = wb.active
@@ -329,7 +325,7 @@ def export_staff_workbooks(wb, wb_path, date_token):
             "Only Melissa is authorized to bill WM."
         )
 
-    for staff_name in ["Rosanna", "Joshua", "Jasmine", "CB"]:
+    for staff_name in ["Rosanna", "Jasmine", "CB"]:
         # Create new workbook
         new_wb = openpyxl.Workbook()
         new_ws = new_wb.active
@@ -358,8 +354,8 @@ def export_staff_workbooks(wb, wb_path, date_token):
             print(f"No rows for {staff_name}, skipping")
             continue
 
-        # Finalize for Rosanna, Joshua, and Jasmine only
-        if staff_name in ["Rosanna", "Joshua", "Jasmine"]:
+        # Finalize for Rosanna and Jasmine only
+        if staff_name in ["Rosanna", "Jasmine"]:
             finalize_workbook(new_wb, include_iop_status=(staff_name == "Jasmine"))
 
         # Save
