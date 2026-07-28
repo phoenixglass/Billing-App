@@ -2,7 +2,8 @@
 Unit tests for the daily billing schedule helpers in billing_rules.py.
 
 Daily billing schedule:
-- Professional (Claim Type CMS-1500) services bill every day of the week.
+- Professional (Claim Type CMS-1500 or UB-04) services bill every day of
+  the week.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
 - Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
@@ -12,12 +13,11 @@ Daily billing schedule:
 - PHP (Partial Hospitalization) always goes to Melissa and isn't governed
   by this weekday schedule at all.
 
-Rosanna/Joshua/Jasmine split (Insurance rows only):
-- Rosanna's professional-service row cap by weekday: Monday=300 only.
-- Joshua's professional-service row cap by weekday: Tuesday=300,
-  Thursday=125, Friday=125.
-- Wednesday and weekends have no cap for either of them (Jasmine gets the
-  whole professional pool those days).
+Rosanna/Jasmine split (Insurance rows only):
+- Rosanna's professional-service row cap by weekday: 150 rows Monday
+  through Friday.
+- Weekends have no cap for her (Jasmine gets the whole professional pool
+  those days).
 """
 import sys
 from pathlib import Path
@@ -34,7 +34,6 @@ from billing_rules import (
     is_php_service,
     is_professional_claim_type,
     parse_weekday_from_token,
-    JOSHUA_PROFESSIONAL_CAP,
     ROSANNA_PROFESSIONAL_CAP,
 )
 
@@ -124,12 +123,16 @@ def test_is_iop_service_variants():
 
 
 def test_claim_type_professional():
-    """Only Claim Type == CMS-1500 (case/whitespace-insensitive) is Professional."""
+    """Claim Type CMS-1500 or UB-04 (case/whitespace-insensitive) is Professional."""
     assert is_professional_claim_type('CMS-1500')
     assert is_professional_claim_type('cms-1500')
     assert is_professional_claim_type('  CMS-1500  ')
 
-    assert not is_professional_claim_type('UB-04')
+    assert is_professional_claim_type('UB-04')
+    assert is_professional_claim_type('ub-04')
+    assert is_professional_claim_type('  UB-04  ')
+
+    assert not is_professional_claim_type('837I')
     assert not is_professional_claim_type('')
     assert not is_professional_claim_type(None)
 
@@ -211,29 +214,16 @@ def test_self_pay_every_service_every_day_no_exceptions():
 
 
 def test_rosanna_professional_cap_by_weekday():
-    """Rosanna's professional cap: Monday=300 only."""
-    assert ROSANNA_PROFESSIONAL_CAP[0] == 300  # Monday
+    """Rosanna's professional cap: 150 rows Monday through Friday."""
+    assert ROSANNA_PROFESSIONAL_CAP[0] == 150  # Monday
+    assert ROSANNA_PROFESSIONAL_CAP[1] == 150  # Tuesday
+    assert ROSANNA_PROFESSIONAL_CAP[2] == 150  # Wednesday
+    assert ROSANNA_PROFESSIONAL_CAP[3] == 150  # Thursday
+    assert ROSANNA_PROFESSIONAL_CAP[4] == 150  # Friday
 
-    # Every other day is intentionally absent -> cap of 0.
-    assert ROSANNA_PROFESSIONAL_CAP.get(1, 0) == 0
-    assert ROSANNA_PROFESSIONAL_CAP.get(2, 0) == 0
-    assert ROSANNA_PROFESSIONAL_CAP.get(3, 0) == 0
-    assert ROSANNA_PROFESSIONAL_CAP.get(4, 0) == 0
+    # Weekends are intentionally absent -> cap of 0.
     assert ROSANNA_PROFESSIONAL_CAP.get(5, 0) == 0
     assert ROSANNA_PROFESSIONAL_CAP.get(6, 0) == 0
-
-
-def test_joshua_professional_cap_by_weekday():
-    """Joshua's professional cap: Tue=300, Thu/Fri=125, Mon/Wed/weekend=0 (absent)."""
-    assert JOSHUA_PROFESSIONAL_CAP[1] == 300  # Tuesday
-    assert JOSHUA_PROFESSIONAL_CAP[3] == 125  # Thursday
-    assert JOSHUA_PROFESSIONAL_CAP[4] == 125  # Friday
-
-    # Monday, Wednesday, and weekends are intentionally absent -> cap of 0.
-    assert JOSHUA_PROFESSIONAL_CAP.get(0, 0) == 0
-    assert JOSHUA_PROFESSIONAL_CAP.get(2, 0) == 0
-    assert JOSHUA_PROFESSIONAL_CAP.get(5, 0) == 0
-    assert JOSHUA_PROFESSIONAL_CAP.get(6, 0) == 0
 
 
 def test_parse_weekday_from_token():
@@ -313,9 +303,6 @@ if __name__ == '__main__':
 
     test_rosanna_professional_cap_by_weekday()
     print("✓ test_rosanna_professional_cap_by_weekday passed")
-
-    test_joshua_professional_cap_by_weekday()
-    print("✓ test_joshua_professional_cap_by_weekday passed")
 
     test_parse_weekday_from_token()
     print("✓ test_parse_weekday_from_token passed")
