@@ -3,3 +3,12 @@
 streamlit>=1.40,<2
 openpyxl>=3.1.5,<4
 google-cloud-storage>=2.10,<3
+
+# Streamlit only requires "starlette<2,>=0.46.0", which is too loose. Starlette
+# 1.4.0 added a required keyword-only `thread_minimum_size` argument to
+# GZipResponder.__init__, but Streamlit's MediaAwareGZipMiddleware still
+# constructs its GZipResponder subclass without it. Every gzip-encoded request
+# then raises TypeError, so health checks return 500 and the app fails to boot
+# ("Oh no. Error running app."). Hold starlette below 1.4 until Streamlit ships
+# a compatible release.
+starlette>=0.46,<1.4
