@@ -1,14 +1,107 @@
-# Pinned to compatible ranges to limit supply-chain risk.
-# Run `pip-audit` regularly to check for known vulnerabilities.
-streamlit>=1.40,<2
-openpyxl>=3.1.5,<4
-google-cloud-storage>=2.10,<3
-
-# Streamlit only requires "starlette<2,>=0.46.0", which is too loose. Starlette
+# =============================================================================
+# FULLY PINNED DEPENDENCIES — DO NOT LOOSEN THESE INTO RANGES
+# =============================================================================
+#
+# Why every package is pinned to an exact version, including ones we don't
+# import directly:
+#
+# Streamlit Cloud reinstalls dependencies from this file on every deploy and
+# resolves each range to the newest version available at that moment. A range
+# means a deploy can pull in code we never tested, with no commit on our side.
+#
+# That is exactly what took the app down: `streamlit` requires only
+# "starlette<2,>=0.46.0", so a deploy picked up starlette 1.4.0 on release.
 # 1.4.0 added a required keyword-only `thread_minimum_size` argument to
-# GZipResponder.__init__, but Streamlit's MediaAwareGZipMiddleware still
-# constructs its GZipResponder subclass without it. Every gzip-encoded request
-# then raises TypeError, so health checks return 500 and the app fails to boot
-# ("Oh no. Error running app."). Hold starlette below 1.4 until Streamlit ships
-# a compatible release.
-starlette>=0.46,<1.4
+# GZipResponder.__init__, which Streamlit 1.61.0 does not pass. Every
+# gzip-encoded request raised TypeError, the health endpoints returned 500,
+# and the app never booted ("Oh no. Error running app.").
+#
+# Note that pinning only our direct dependencies would NOT have prevented this.
+# starlette is a transitive dependency — pulled in by streamlit, never named by
+# us. Only a complete lockfile, transitive packages included, makes deploys
+# reproducible.
+#
+# The versions below are the exact set Streamlit Cloud resolved on its own
+# (Python 3.14), so they are known to install and run together there. The one
+# deliberate change is starlette, held at 1.3.1 — the last release compatible
+# with Streamlit's gzip middleware.
+#
+# -----------------------------------------------------------------------------
+# Upgrading
+# -----------------------------------------------------------------------------
+# Pinning trades automatic updates for predictability, so upgrade on purpose:
+#
+#   1. Run `pip-audit` regularly — pinned versions do not pick up security
+#      patches on their own. This is the tradeoff, not an oversight.
+#   2. Bump versions in a branch, never directly on main.
+#   3. Verify the app actually serves traffic before merging. A boot check is
+#      not enough: this outage did not surface until a request arrived, so
+#      confirm the health endpoint responds 200:
+#        streamlit run app.py --server.port 8501 &
+#        curl -sS -o /dev/null -w '%{http_code}\n' \
+#          -H 'Accept-Encoding: gzip' http://localhost:8501/_stcore/health
+#   4. Re-check `starlette` specifically. It can be unpinned only once
+#      Streamlit's MediaAwareGZipMiddleware passes `thread_minimum_size`
+#      (or otherwise supports starlette >= 1.4).
+#
+# =============================================================================
+
+# --- Direct dependencies (imported by app.py / Unbilled Step 1.py) -----------
+streamlit==1.61.0
+openpyxl==3.1.5
+google-cloud-storage==2.19.0
+
+# --- Held back deliberately --------------------------------------------------
+# Incompatible with streamlit 1.61.0 from 1.4.0 onward; see the note above.
+starlette==1.3.1
+
+# --- Transitive dependencies (pinned for reproducible deploys) ---------------
+altair==6.2.2
+anyio==4.14.2
+attrs==26.1.0
+blinker==1.9.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.4.9
+click==8.4.2
+cryptography==50.0.0
+et-xmlfile==2.0.0
+google-api-core==2.33.0
+google-auth==2.56.2
+google-cloud-core==2.6.0
+google-crc32c==1.8.0
+google-resumable-media==2.10.0
+googleapis-common-protos==1.75.0
+h11==0.16.0
+httptools==0.8.0
+idna==3.18
+itsdangerous==2.2.0
+jinja2==3.1.6
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+markupsafe==3.0.3
+narwhals==2.24.0
+numpy==2.5.1
+packaging==26.3
+pandas==3.0.5
+pillow==12.3.0
+proto-plus==1.28.2
+protobuf==7.35.1
+pyarrow==24.0.0
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+pycparser==3.0
+pydeck==0.9.3
+python-dateutil==2.9.0.post0
+python-multipart==0.0.32
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.6.3
+six==1.17.0
+tenacity==9.1.4
+toml==0.10.2
+typing-extensions==4.16.0
+urllib3==2.7.0
+uvicorn==0.52.1
+watchdog==6.0.0
+websockets==16.1.1
