@@ -21,16 +21,43 @@ from billing_rules import (
     ROSANNA_PROFESSIONAL_CAP,
 )
 
+# GCS logging is optional — the app falls back to local logging without it, so
+# a problem importing it must never stop the app from starting.
+#
+# ImportError alone is not enough. A broken (rather than missing) install fails
+# in other ways: a partially installed wheel raises OSError/AttributeError, and
+# a mismatched `cryptography` build raises pyo3's PanicException, which derives
+# from BaseException and so slips past `except Exception`. Catch BaseException
+# and re-raise only genuine control-flow exceptions.
 try:
     from google.cloud import storage
     from google.oauth2 import service_account
     GCS_AVAILABLE = True
-except ImportError:
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as e:  # noqa: BLE001 - optional dependency must not break boot
+    print(f"WARNING: Google Cloud Storage libraries unavailable "
+          f"({type(e).__name__}: {e}). Using local audit logging only.")
     GCS_AVAILABLE = False
 
 # Configure audit logging
 LOG_DIR = Path("audit_logs")
-LOG_DIR.mkdir(exist_ok=True)
+
+
+def _ensure_log_dir() -> bool:
+    """Create the audit log directory, returning False if it is unusable.
+
+    Audit logging must never prevent the app from starting: on a read-only or
+    full filesystem we fall back to console logging, which the hosting platform
+    still captures.
+    """
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        return True
+    except OSError as e:
+        print(f"WARNING: Cannot create audit log directory '{LOG_DIR}': {e}. "
+              "Falling back to console logging only.")
+        return False
 
 def setup_logging():
     """Setup logging with GCS support if credentials are available."""
@@ -60,9 +87,16 @@ def setup_logging():
         except Exception as e:
             print(f"WARNING: Failed to setup GCS logging: {e}. Using local logging only.")
 
-    # Always add local logging handler for development/fallback
-    log_file = LOG_DIR / f"audit_{datetime.now().strftime('%Y%m%d')}.log"
-    handlers.append(logging.FileHandler(log_file))
+    # Local file handler for development/fallback. A failure to open the log
+    # file must not stop startup — console logging below still reaches the
+    # hosting platform's log capture.
+    if _ensure_log_dir():
+        try:
+            log_file = LOG_DIR / f"audit_{datetime.now().strftime('%Y%m%d')}.log"
+            handlers.append(logging.FileHandler(log_file))
+        except OSError as e:
+            print(f"WARNING: Cannot open audit log file for writing: {e}. "
+                  "Falling back to console logging only.")
 
     # Add console handler
     handlers.append(logging.StreamHandler())
@@ -74,9 +108,14 @@ def setup_logging():
         force=True
     )
 
-    # Security: Enforce restrictive permissions on audit logs (owner read/write only)
-    for log_file in LOG_DIR.glob("audit_*.log"):
-        os.chmod(log_file, 0o600)
+    # Security: Enforce restrictive permissions on audit logs (owner read/write
+    # only). Best-effort: some filesystems reject chmod, which must not stop
+    # startup. The failure is logged so it is visible during a review.
+    try:
+        for existing_log in LOG_DIR.glob("audit_*.log"):
+            os.chmod(existing_log, 0o600)
+    except OSError as e:
+        print(f"WARNING: Could not restrict audit log permissions: {e}")
 
     return gcs_handler
 
