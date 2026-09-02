@@ -71,17 +71,60 @@ Rosanna/Jasmine schedule above:
 - Billing Provider "O'Flynn, Karen" with GROUPFLD1 "OP Chappaqua" or "OP NYC" is
   always Unable to Bill.
 
+## Optional Per-Run Options
+
+The checkboxes in the app are per-run options for the file being processed.
+All of them are off by default, so an unchecked run follows the standard daily
+schedule above. The command-line script takes the same options as flags.
+
+| Option | Flag | Effect |
+|--------|------|--------|
+| Exclude Optum insurance | — | Optum utox (drug screen) rows are left out of the individual workbooks. |
+| Exclude BCB Anthem CT for PHP, Residential, and Detox | — | Those BCB Anthem CT rows are left out of the individual workbooks. |
+| Remove Anthem from Rosanna and Jasmine reports | — | Anthem rows are left out of Rosanna's and Jasmine's workbooks. |
+| Don't give anyone Detox or Residential | — | Detox/Residential rows are left out of every individual workbook. |
+| Include Programming (Detox/Residential) today | `--include-programming` | Programming bills regardless of the weekday, so it can be worked on a Monday or Wednesday. Billable Programming rows go to Jasmine as usual. E-care is unaffected and stays Tuesday-only. |
+| Exclude Aetna | `--exclude-aetna` | Every Aetna row is left out of the individual workbooks. |
+| Cathy report: Professional services only for Oxford, ConnectiCare, UBH | `--cathy-report` | See the Cathy section below. |
+
+Rows excluded by any of these options are still assigned in the Masters
+workbook — the option only controls what reaches the individual reports.
+
+Checking both "Include Programming (Detox/Residential) today" and "Don't give
+anyone Detox or Residential" is contradictory; the exclusion wins, and the app
+shows a warning saying so.
+
+### Cathy (optional report)
+
+When the Cathy report is turned on, Insurance rows whose `Claim Type` is
+Professional (`CMS-1500` or `UB-04`) **and** whose `Payer` is Oxford,
+ConnectiCare, or UBH are assigned to **Cathy** and saved as her own workbook.
+
+- Those rows leave the Rosanna/Jasmine professional pool rather than being
+  duplicated into it, so no row is worked twice. Rosanna's 150-row cap then
+  applies to whatever is left of the pool.
+- Payer matching is case-insensitive and tolerates the spelling variants these
+  payers appear with: `ConnectiCare`/`Connecti Care` and `UBH`/`United
+  Behavioral Health`.
+- The rules ahead of Cathy still win: Self Pay (CB), WM/OP WM (Melissa), the
+  O'Flynn Karen "Unable to Bill" rule, Aetna/Humana Detox/Residential
+  (Melissa), PHP (Melissa), and IOP (always Jasmine's) — even for one of
+  Cathy's three payers.
+- Her workbook gets the same Status/Comments columns and dropdown as
+  Rosanna's.
+
 ## Reports
 
 Individual workbooks are generated for **Rosanna**, **Jasmine**, and **CB**
-(empty reports are skipped, e.g. Rosanna on weekends). All other staff
-(Melissa, Unable to Bill, etc.) are still assigned in the Masters workbook but
-do not receive separate reports.
+(empty reports are skipped, e.g. Rosanna on weekends), plus **Cathy** when her
+report is turned on for the run. All other staff (Melissa, Unable to Bill,
+etc.) are still assigned in the Masters workbook but do not receive separate
+reports.
 
-Rosanna's and Jasmine's reports include a Status column with a dropdown list:
-Billed, Unable to Bill, Contractual Adj, Incomplete Billings, Utox Batch, and
-Inclusive Services. Jasmine's report also includes two Jasmine-only options:
-Batch Billings and IOP.
+Rosanna's, Jasmine's, and Cathy's reports include a Status column with a
+dropdown list: Billed, Unable to Bill, Contractual Adj, Incomplete Billings,
+Utox Batch, and Inclusive Services. Jasmine's report also includes two
+Jasmine-only options: Batch Billings and IOP.
 
 ### Fallback Behavior
 
@@ -103,10 +146,14 @@ Upload an Excel file with MMDDYYYY in the filename (e.g., `Report_01252026.xlsx`
 ### Command-Line Script
 
 ```bash
-python "Unbilled Step 1.py"
+python "Unbilled Step 1.py" "path/to/Unbilled Revenue 01252026.xlsx"
 ```
 
-Update the `workbook_path` variable at the bottom of the script with your file path.
+Add any of the per-run flags as needed, for example:
+
+```bash
+python "Unbilled Step 1.py" "path/to/file.xlsx" --include-programming --exclude-aetna --cathy-report
+```
 
 ## Testing
 
@@ -114,12 +161,13 @@ Run the unit tests for weekday rules:
 
 ```bash
 python tests/test_weekday_rules.py
+python tests/test_assign_staff.py
 ```
 
 Or use pytest if available:
 
 ```bash
-pytest tests/test_weekday_rules.py -v
+pytest tests/ -v
 ```
 
 ## Requirements
@@ -141,6 +189,7 @@ pip install -r requirements.txt
 - `Unbilled Step 1.py` - Command-line processing script
 - `billing_rules.py` - Business logic for weekday-based non-billable determination
 - `tests/test_weekday_rules.py` - Unit tests for billing rules
+- `tests/test_assign_staff.py` - End-to-end tests for staff assignment
 - `requirements.txt` - Python dependencies
 
 ## License
