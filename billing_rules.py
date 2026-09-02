@@ -44,11 +44,12 @@ standard schedule unless the operator turns it on for that run):
 - include_programming: bill Programming (Detox, Residential) regardless of
   the weekday, so it can be included on a Monday or Wednesday. E-care is
   unaffected and stays Tuesday-only.
-- Cathy report: pull Professional (CMS-1500/UB-04) Insurance rows whose
-  Payer is Oxford, ConnectiCare, or UBH (see is_cathy_payer) out of the
-  professional pool and assign them to Cathy instead, so a row is never
-  worked twice. WM, PHP, the O'Flynn Karen rule and the IOP-to-Jasmine
-  rule still take priority over it.
+- Cathy report: pull every Professional (CMS-1500/UB-04) Insurance row
+  whose Payer is Oxford, ConnectiCare, or UBH (see is_cathy_payer) out of
+  the professional pool and assign it to Cathy instead, so a row is never
+  worked twice. Whatever the service is, it is hers — including IOP for
+  those three payers, which she takes ahead of the IOP-to-Jasmine rule.
+  WM, PHP and the O'Flynn Karen rule still take priority over it.
 - Exclude Aetna: drop Aetna rows (see is_aetna_payer) from the individual
   staff reports; they stay in the Masters workbook.
 """

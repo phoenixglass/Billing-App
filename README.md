@@ -34,7 +34,9 @@ reach Rosanna or Jasmine — they are marked Unable to Bill.
   billable Programming rows go to Jasmine.
 - **IOP** (including Telemed IOP) bills every day of the week, with no
   exceptions, and always goes to Jasmine, bypassing the professional
-  pool/Rosanna split even if Claim Type is CMS-1500 or UB-04.
+  pool/Rosanna split even if Claim Type is CMS-1500 or UB-04 — unless the
+  Cathy report is on and the row is a Professional row for one of her
+  payers, which is hers (see below).
 - **E-care** bills on Tuesdays only (regardless of Claim Type). Billable e-care
   rows go to Jasmine.
 - Any other billable Insurance row whose Claim Type is not CMS-1500/UB-04
@@ -96,22 +98,26 @@ shows a warning saying so.
 
 ### Cathy (optional report)
 
-When the Cathy report is turned on, Insurance rows whose `Claim Type` is
-Professional (`CMS-1500` or `UB-04`) **and** whose `Payer` is Oxford,
-ConnectiCare, or UBH are assigned to **Cathy** and saved as her own workbook.
+When the Cathy report is turned on, **every** Insurance row whose `Claim Type`
+is Professional (`CMS-1500` or `UB-04`) **and** whose `Payer` is Oxford,
+ConnectiCare, or UBH is assigned to **Cathy** and saved as her own workbook.
 
+- The service does not matter, only the claim type and the payer. IOP for
+  those three payers is hers too: she takes it ahead of the IOP-to-Jasmine
+  rule. IOP for any other payer, or IOP that is not a Professional claim
+  type, is still Jasmine's.
 - Those rows leave the Rosanna/Jasmine professional pool rather than being
   duplicated into it, so no row is worked twice. Rosanna's 150-row cap then
   applies to whatever is left of the pool.
 - Payer matching is case-insensitive and tolerates the spelling variants these
   payers appear with: `ConnectiCare`/`Connecti Care` and `UBH`/`United
   Behavioral Health`.
-- The rules ahead of Cathy still win: Self Pay (CB), WM/OP WM (Melissa), the
-  O'Flynn Karen "Unable to Bill" rule, Aetna/Humana Detox/Residential
-  (Melissa), PHP (Melissa), and IOP (always Jasmine's) — even for one of
-  Cathy's three payers.
-- Her workbook gets the same Status/Comments columns and dropdown as
-  Rosanna's.
+- Three rules still take priority over Cathy, even for her three payers:
+  WM/OP WM (Melissa — only she is authorized to bill WM), PHP (Melissa), and
+  Billing Provider "O'Flynn, Karen" in OP Chappaqua/OP NYC (always Unable to
+  Bill). Self Pay rows still go to CB.
+- Her workbook gets Status/Comments columns whose dropdown carries the same
+  options as Jasmine's, Batch Billings and IOP included.
 
 ## Reports
 
@@ -123,8 +129,8 @@ reports.
 
 Rosanna's, Jasmine's, and Cathy's reports include a Status column with a
 dropdown list: Billed, Unable to Bill, Contractual Adj, Incomplete Billings,
-Utox Batch, and Inclusive Services. Jasmine's report also includes two
-Jasmine-only options: Batch Billings and IOP.
+Utox Batch, and Inclusive Services. Jasmine's and Cathy's reports share the
+same dropdown, which adds two more options: Batch Billings and IOP.
 
 ### Fallback Behavior
 

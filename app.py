@@ -245,7 +245,8 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       (i.e. institutional/837I), unless it's PHP (always Melissa's).
     - IOP (including Telemed IOP) always goes to Jasmine, every day of the
       week, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500 or UB-04.
+      Type is CMS-1500 or UB-04 — unless the Cathy report is on and the
+      row is a Professional row for one of her payers, which is hers.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM/OP WM Program Level, PHP/Partial Hospitalization, or
@@ -260,11 +261,13 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     - include_programming: Programming (Detox, Residential) is billable
       regardless of the weekday, so it can be worked on a Monday or
       Wednesday. E-care is unaffected and stays Tuesday-only.
-    - assign_cathy: Professional (CMS-1500/UB-04) Insurance rows whose
-      Payer is Oxford, ConnectiCare, or UBH go to Cathy instead of into the
-      Rosanna/Jasmine professional pool, so no row is worked twice. The
-      rules above it (Self Pay, WM, O'Flynn Karen, Aetna/Humana
-      Detox/Residential, PHP, and IOP-to-Jasmine) still take priority.
+    - assign_cathy: every Professional (CMS-1500/UB-04) Insurance row whose
+      Payer is Oxford, ConnectiCare, or UBH goes to Cathy instead of into
+      the Rosanna/Jasmine professional pool, so no row is worked twice.
+      Whatever the service is, it is hers: that includes IOP for those
+      three payers, which she takes ahead of the IOP-to-Jasmine rule. The
+      rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
+      Detox/Residential, and PHP) still take priority.
 
     Args:
         ws: Worksheet to process
@@ -369,20 +372,22 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
+        # Cathy (optional): every Professional row for Oxford, ConnectiCare,
+        # and UBH is hers, whatever the service is. That includes IOP, so
+        # this sits ahead of the IOP-to-Jasmine rule below. Her rows leave
+        # the Rosanna/Jasmine professional pool entirely rather than being
+        # worked twice.
+        if (assign_cathy and is_professional_claim_type(claim_type)
+                and is_cathy_payer(payer)):
+            fixed_staff[row] = "Cathy"
+            other_rows.append(row)
+            continue
+
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
         # the week, bypassing the professional pool/Rosanna split even if
         # Claim Type is CMS-1500 or UB-04.
         if is_iop_service(service):
             fixed_staff[row] = "Jasmine"
-            other_rows.append(row)
-            continue
-
-        # Cathy (optional): Professional rows for Oxford, ConnectiCare, and
-        # UBH are hers, so they leave the Rosanna/Jasmine professional pool
-        # entirely rather than being worked twice.
-        if (assign_cathy and is_professional_claim_type(claim_type)
-                and is_cathy_payer(payer)):
-            fixed_staff[row] = "Cathy"
             other_rows.append(row)
             continue
 
@@ -424,12 +429,13 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
 def finalize_workbook(wb, include_batch_billings: bool = False, include_iop_status: bool = False,
                       skip_status_columns: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
+    """Add Status/Comments columns and validation for Rosanna/Jasmine/Cathy exports.
 
     Args:
         wb: Workbook to finalize.
-        include_batch_billings: When True, add 'Batch Billings' to the dropdown (Jasmine only).
-        include_iop_status: When True, add 'IOP' to the dropdown (Jasmine only).
+        include_batch_billings: When True, add 'Batch Billings' to the dropdown
+            (Jasmine and Cathy).
+        include_iop_status: When True, add 'IOP' to the dropdown (Jasmine and Cathy).
         skip_status_columns: When True, skip adding Status/Comments columns (for CB/self-pay).
     """
     ws = wb.active
@@ -654,8 +660,11 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                 continue
 
             if staff_name in ("Rosanna", "Jasmine", "Cathy"):
-                finalize_workbook(new_wb, include_batch_billings=(staff_name == "Jasmine"),
-                                  include_iop_status=(staff_name == "Jasmine"))
+                # Cathy's Status dropdown carries the same options as
+                # Jasmine's, Batch Billings and IOP included.
+                jasmine_options = staff_name in ("Jasmine", "Cathy")
+                finalize_workbook(new_wb, include_batch_billings=jasmine_options,
+                                  include_iop_status=jasmine_options)
             elif staff_name == "CB":
                 finalize_workbook(new_wb, skip_status_columns=True)
 
@@ -757,10 +766,11 @@ cathy_report = st.checkbox(
     help=(
         "When checked, Insurance rows whose Claim Type is Professional (CMS-1500 or "
         "UB-04) and whose payer is Oxford, ConnectiCare, or UBH are assigned to "
-        "Cathy and saved as her own workbook. Those rows leave the Rosanna/Jasmine "
+        "Cathy and saved as her own workbook, whatever the service is — IOP for "
+        "those payers is hers too. Those rows leave the Rosanna/Jasmine "
         "professional pool, so no row is worked twice — Rosanna's 150-row cap then "
-        "applies to what is left. WM, PHP, the O'Flynn Karen rule, and IOP (always "
-        "Jasmine's) still take priority over Cathy."
+        "applies to what is left. WM, PHP, and the O'Flynn Karen rule still take "
+        "priority over Cathy."
     )
 )
 

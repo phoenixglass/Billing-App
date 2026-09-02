@@ -52,7 +52,11 @@ def _sheet(rows):
 
 
 def _staff_by_client(ws):
-    """Map Client -> assigned staff after assign_staff has reordered the rows."""
+    """Map Client -> assigned staff after assign_staff has reordered the rows.
+
+    Column 1 is the Staff/Status column, so this reads the same assignment
+    the Masters workbook carries for each row.
+    """
     client_col = HEADERS.index("Client") + 1
     return {
         ws.cell(row, client_col).value: ws.cell(row, 1).value
@@ -117,12 +121,11 @@ def test_cathy_rows_leave_the_professional_pool():
 
 
 def test_higher_priority_rules_still_win_over_cathy():
-    """Self Pay, WM, PHP, and IOP keep their owners even for Cathy's payers."""
+    """Self Pay, WM, and PHP keep their owners even for Cathy's payers."""
     ws = _sheet([
         ("Self Pay", "Individual Therapy", "Oxford", "Self, Sam", "CMS-1500"),
         ("Insurance", "Individual Therapy", "Oxford", "Wm, Wes", "CMS-1500"),
         ("Insurance", "Partial Hospitalization", "Oxford", "Php, Pat", "CMS-1500"),
-        ("Insurance", "Telemed IOP", "ConnectiCare", "Iop, Ida", "CMS-1500"),
         ("Insurance", "Individual Therapy", "UBH", "Cathy, Cam", "CMS-1500"),
     ])
     # WM is decided by the Program Level column, so set it on Wes's row.
@@ -135,8 +138,38 @@ def test_higher_priority_rules_still_win_over_cathy():
     assert staff["Self, Sam"] == "CB"        # Self Pay is always CB's
     assert staff["Wm, Wes"] == "Melissa"     # only Melissa bills WM
     assert staff["Php, Pat"] == "Melissa"    # PHP is always Melissa's
-    assert staff["Iop, Ida"] == "Jasmine"    # IOP is always Jasmine's
     assert staff["Cathy, Cam"] == "Cathy"
+
+
+def test_cathy_takes_iop_for_her_payers():
+    """Every Professional service for Cathy's payers is hers, IOP included."""
+    ws = _sheet([
+        ("Insurance", "IOP", "Oxford", "Iop, Ida", "CMS-1500"),
+        ("Insurance", "Telemed IOP", "ConnectiCare", "Iop, Ivan", "UB-04"),
+        ("Insurance", "Detox Admission", "UBH", "Detox, Dora", "CMS-1500"),
+        ("Insurance", "E-Care Individual", "Oxford", "Ecare, Ellis", "CMS-1500"),
+        # IOP for a payer Cathy does not cover is still Jasmine's.
+        ("Insurance", "Telemed IOP", "Optum", "Iop, Otto", "CMS-1500"),
+        # IOP for one of her payers, but not a Professional claim type, is
+        # still Jasmine's.
+        ("Insurance", "IOP", "Oxford", "Iop, Inst", "837I"),
+    ])
+    assign_staff(ws, WEDNESDAY, assign_cathy=True)
+    staff = _staff_by_client(ws)
+
+    assert staff["Iop, Ida"] == "Cathy"
+    assert staff["Iop, Ivan"] == "Cathy"
+    # Professional bills every day, so Wednesday Detox/e-care are hers too.
+    assert staff["Detox, Dora"] == "Cathy"
+    assert staff["Ecare, Ellis"] == "Cathy"
+
+    assert staff["Iop, Otto"] == "Jasmine"
+    assert staff["Iop, Inst"] == "Jasmine"
+
+    # Her rows are labelled "Cathy" in the Staff/Status column, so the
+    # Masters workbook names her as the owner too.
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    assert assignments.count("Cathy") == 4
 
 
 def test_programming_included_on_a_wednesday():
@@ -195,6 +228,31 @@ def test_rosanna_cap_applies_to_the_pool_left_after_cathy():
     # 160 rows are left in the pool: Rosanna's 150, then Jasmine's 10.
     assert assignments.count("Rosanna") == 150
     assert assignments.count("Jasmine") == 10
+
+
+def _dropdown_options(**kwargs):
+    """Run finalize_workbook on a small workbook and read back its Status list."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(HEADERS)
+    ws.append(["Rosanna", "OP Westchester", "Insurance", "Individual Therapy",
+               "Oxford", "Smith, John", "OP", "Adams, Ann", "CMS-1500"])
+    unbilled.finalize_workbook(wb, **kwargs)
+    sheet2 = wb["Sheet2"]
+    return [sheet2.cell(row, 1).value for row in range(1, sheet2.max_row + 1)]
+
+
+def test_cathy_status_dropdown_matches_jasmine():
+    """Cathy's Status dropdown carries the same options as Jasmine's."""
+    base = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings",
+            "Utox Batch", "Inclusive Services"]
+
+    # Rosanna's list: the six shared options.
+    assert _dropdown_options() == base
+
+    # Jasmine's and Cathy's list: the same six plus Batch Billings and IOP.
+    jasmine = _dropdown_options(include_batch_billings=True, include_iop_status=True)
+    assert jasmine == base + ["Batch Billings", "IOP"]
 
 
 if __name__ == '__main__':

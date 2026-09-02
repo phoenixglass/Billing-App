@@ -131,7 +131,8 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       (i.e. institutional/837I), unless it's PHP (always Melissa's).
     - IOP (including Telemed IOP) always goes to Jasmine, every day of the
       week, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500 or UB-04.
+      Type is CMS-1500 or UB-04 — unless the Cathy report is on and the
+      row is a Professional row for one of her payers, which is hers.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM Program Level, PHP/Partial Hospitalization, or
@@ -146,11 +147,13 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     - include_programming: Programming (Detox, Residential) is billable
       regardless of the weekday, so it can be worked on a Monday or
       Wednesday. E-care is unaffected and stays Tuesday-only.
-    - assign_cathy: Professional (CMS-1500/UB-04) Insurance rows whose
-      Payer is Oxford, ConnectiCare, or UBH go to Cathy instead of into the
-      Rosanna/Jasmine professional pool, so no row is worked twice. The
-      rules above it (Self Pay, WM, O'Flynn Karen, Aetna/Humana
-      Detox/Residential, PHP, and IOP-to-Jasmine) still take priority.
+    - assign_cathy: every Professional (CMS-1500/UB-04) Insurance row whose
+      Payer is Oxford, ConnectiCare, or UBH goes to Cathy instead of into
+      the Rosanna/Jasmine professional pool, so no row is worked twice.
+      Whatever the service is, it is hers: that includes IOP for those
+      three payers, which she takes ahead of the IOP-to-Jasmine rule. The
+      rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
+      Detox/Residential, and PHP) still take priority.
     """
 
     cols = {}
@@ -239,20 +242,22 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
+        # Cathy (optional): every Professional row for Oxford, ConnectiCare,
+        # and UBH is hers, whatever the service is. That includes IOP, so
+        # this sits ahead of the IOP-to-Jasmine rule below. Her rows leave
+        # the Rosanna/Jasmine professional pool entirely rather than being
+        # worked twice.
+        if (assign_cathy and is_professional_claim_type(claim_type)
+                and is_cathy_payer(payer)):
+            fixed_staff[row] = "Cathy"
+            other_rows.append(row)
+            continue
+
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
         # the week, bypassing the professional pool/Rosanna split even if
         # Claim Type is CMS-1500 or UB-04.
         if is_iop_service(service):
             fixed_staff[row] = "Jasmine"
-            other_rows.append(row)
-            continue
-
-        # Cathy (optional): Professional rows for Oxford, ConnectiCare, and
-        # UBH are hers, so they leave the Rosanna/Jasmine professional pool
-        # entirely rather than being worked twice.
-        if (assign_cathy and is_professional_claim_type(claim_type)
-                and is_cathy_payer(payer)):
-            fixed_staff[row] = "Cathy"
             other_rows.append(row)
             continue
 
@@ -288,8 +293,13 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
     print("Staff assignment complete")
 
-def finalize_workbook(wb, include_iop_status: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
+def finalize_workbook(wb, include_batch_billings: bool = False,
+                      include_iop_status: bool = False):
+    """Add Status/Comments columns and validation for Rosanna/Jasmine/Cathy exports.
+
+    Jasmine and Cathy share the same Status dropdown, which adds 'Batch
+    Billings' and 'IOP' to the list Rosanna gets.
+    """
     ws = wb.active
 
     # Insert two columns at E
@@ -301,6 +311,8 @@ def finalize_workbook(wb, include_iop_status: bool = False):
     ws_list = wb.create_sheet("Sheet2")
     status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings",
                     "Utox Batch", "Inclusive Services"]
+    if include_batch_billings:
+        status_items.append("Batch Billings")
     if include_iop_status:
         status_items.append("IOP")
 
@@ -400,9 +412,12 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
             print(f"No rows for {staff_name}, skipping")
             continue
 
-        # Finalize for Rosanna, Jasmine, and Cathy only
+        # Finalize for Rosanna, Jasmine, and Cathy only. Cathy's Status
+        # dropdown carries the same options as Jasmine's.
         if staff_name in ["Rosanna", "Jasmine", "Cathy"]:
-            finalize_workbook(new_wb, include_iop_status=(staff_name == "Jasmine"))
+            jasmine_options = staff_name in ("Jasmine", "Cathy")
+            finalize_workbook(new_wb, include_batch_billings=jasmine_options,
+                              include_iop_status=jasmine_options)
 
         # Save
         save_path = save_folder / f"Unbilled Revenue By Resident and Funding Type {date_token} - {staff_name}.xlsx"
