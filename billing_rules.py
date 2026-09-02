@@ -38,7 +38,22 @@ PHP always goes to Melissa):
   Claim Type is CMS-1500 or UB-04.
 - GROUPFLD2 values other than "Insurance" or "Self Pay" never reach
   Rosanna or Jasmine.
+
+Optional, per-run overrides (all off by default; nothing below changes the
+standard schedule unless the operator turns it on for that run):
+- include_programming: bill Programming (Detox, Residential) regardless of
+  the weekday, so it can be included on a Monday or Wednesday. E-care is
+  unaffected and stays Tuesday-only.
+- Cathy report: pull every Professional (CMS-1500/UB-04) Insurance row
+  whose Payer is Oxford, ConnectiCare, or UBH (see is_cathy_payer) out of
+  the professional pool and assign it to Cathy instead, so a row is never
+  worked twice. Whatever the service is, it is hers — including IOP for
+  those three payers, which she takes ahead of the IOP-to-Jasmine rule.
+  WM, PHP and the O'Flynn Karen rule still take priority over it.
+- Exclude Aetna: drop Aetna rows (see is_aetna_payer) from the individual
+  staff reports; they stay in the Masters workbook.
 """
+import re
 from datetime import datetime
 from typing import Tuple
 
@@ -50,6 +65,16 @@ PHP_KEYWORDS = ("partial hospitalization", "php")
 # Rosanna works Monday through Friday, capped at 150 rows/day; she receives
 # no rows on weekends.
 ROSANNA_PROFESSIONAL_CAP = {0: 150, 1: 150, 2: 150, 3: 150, 4: 150}
+
+# Payers that go to Cathy's Professional-services-only report when that
+# optional report is turned on. Matching is case-insensitive and tolerant of
+# the spelling variants these payers appear with in the Payer column
+# ("ConnectiCare"/"Connecti Care", "UBH"/"United Behavioral Health").
+CATHY_PAYERS = ("Oxford", "ConnectiCare", "UBH")
+_CATHY_PAYER_RE = re.compile(
+    r"oxford|connecti[\s\-]?care|\bubh\b|united\s+behavioral\s+health",
+    re.IGNORECASE,
+)
 
 
 def parse_weekday_from_token(date_token: str) -> Tuple[int, bool]:
@@ -113,8 +138,26 @@ def is_professional_claim_type(claim_type: str) -> bool:
     return (claim_type or "").strip().upper() in ("CMS-1500", "UB-04")
 
 
+def is_cathy_payer(payer: str) -> bool:
+    """Return True if the Payer column value is Oxford, ConnectiCare, or UBH.
+
+    Used by the optional Cathy report, which takes only Professional
+    (CMS-1500/UB-04) Insurance rows for these three payers.
+    """
+    return bool(_CATHY_PAYER_RE.search(payer or ""))
+
+
+def is_aetna_payer(payer: str) -> bool:
+    """Return True if the Payer column value refers to Aetna."""
+    return "aetna" in (payer or "").lower()
+
+
 def is_non_billable_service_for_weekday(
-    service: str, weekday: int, is_professional: bool = False, self_pay: bool = False
+    service: str,
+    weekday: int,
+    is_professional: bool = False,
+    self_pay: bool = False,
+    include_programming: bool = False,
 ) -> bool:
     """
     Return True if the given service (string) should be treated as non-billable
@@ -126,6 +169,10 @@ def is_non_billable_service_for_weekday(
       Professional rows bill every day of the week.
     - self_pay: when True, every service is billable every day, with no
       exceptions (including e-care).
+    - include_programming: one-off override. When True, Programming (Detox,
+      Residential) is billable regardless of the weekday, so it can be
+      included on a Monday or Wednesday. It does not affect e-care, which
+      stays Tuesday-only.
     """
     s = (service or "").lower().strip()
 
@@ -145,8 +192,11 @@ def is_non_billable_service_for_weekday(
     if is_iop_service(s):
         return False
 
-    # Programming (Detox, Residential) bills Tue/Thu/Fri + weekends.
+    # Programming (Detox, Residential) bills Tue/Thu/Fri + weekends, unless
+    # the one-off include_programming override is on for this run.
     if _is_programming_service(s):
+        if include_programming:
+            return False
         return weekday not in (1, 3, 4, 5, 6)
 
     # Anything else is neither Professional nor Programming nor e-care, and

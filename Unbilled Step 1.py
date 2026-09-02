@@ -11,7 +11,10 @@ from billing_rules import (
     is_professional_claim_type,
     is_iop_service,
     is_php_service,
+    is_cathy_payer,
+    is_aetna_payer,
     _is_drug_screen as is_drug_screen,
+    CATHY_PAYERS,
     ROSANNA_PROFESSIONAL_CAP,
 )
 
@@ -109,7 +112,8 @@ def step_1_extract_invalid(ws):
     print(f"Extracted {len(invalid_rows)} invalid rows to 'Invalid' sheet")
     return len(invalid_rows)
 
-def assign_staff(ws, date_token: str = None):
+def assign_staff(ws, date_token: str = None, include_programming: bool = False,
+                 assign_cathy: bool = False):
     """Assign staff names based on the standard daily billing rules.
 
     - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
@@ -127,7 +131,8 @@ def assign_staff(ws, date_token: str = None):
       (i.e. institutional/837I), unless it's PHP (always Melissa's).
     - IOP (including Telemed IOP) always goes to Jasmine, every day of the
       week, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500 or UB-04.
+      Type is CMS-1500 or UB-04 — unless the Cathy report is on and the
+      row is a Professional row for one of her payers, which is hers.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM Program Level, PHP/Partial Hospitalization, or
@@ -136,6 +141,19 @@ def assign_staff(ws, date_token: str = None):
       above. PHP rows are assigned to Melissa every day in the Masters
       spreadsheet; she does not get an individual report, and PHP is
       billed only on Tuesdays as an operational matter.
+
+    Two optional, per-run overrides (both off by default) sit on top of the
+    schedule above:
+    - include_programming: Programming (Detox, Residential) is billable
+      regardless of the weekday, so it can be worked on a Monday or
+      Wednesday. E-care is unaffected and stays Tuesday-only.
+    - assign_cathy: every Professional (CMS-1500/UB-04) Insurance row whose
+      Payer is Oxford, ConnectiCare, or UBH goes to Cathy instead of into
+      the Rosanna/Jasmine professional pool, so no row is worked twice.
+      Whatever the service is, it is hers: that includes IOP for those
+      three payers, which she takes ahead of the IOP-to-Jasmine rule. The
+      rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
+      Detox/Residential, and PHP) still take priority.
     """
 
     cols = {}
@@ -224,6 +242,17 @@ def assign_staff(ws, date_token: str = None):
             other_rows.append(row)
             continue
 
+        # Cathy (optional): every Professional row for Oxford, ConnectiCare,
+        # and UBH is hers, whatever the service is. That includes IOP, so
+        # this sits ahead of the IOP-to-Jasmine rule below. Her rows leave
+        # the Rosanna/Jasmine professional pool entirely rather than being
+        # worked twice.
+        if (assign_cathy and is_professional_claim_type(claim_type)
+                and is_cathy_payer(payer)):
+            fixed_staff[row] = "Cathy"
+            other_rows.append(row)
+            continue
+
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
         # the week, bypassing the professional pool/Rosanna split even if
         # Claim Type is CMS-1500 or UB-04.
@@ -237,7 +266,8 @@ def assign_staff(ws, date_token: str = None):
             professional_rows.append((row, client))
             continue
 
-        if is_non_billable_service_for_weekday(service, weekday):
+        if is_non_billable_service_for_weekday(
+                service, weekday, include_programming=include_programming):
             fixed_staff[row] = "Unable to Bill"
         else:
             fixed_staff[row] = "Jasmine"
@@ -263,8 +293,13 @@ def assign_staff(ws, date_token: str = None):
 
     print("Staff assignment complete")
 
-def finalize_workbook(wb, include_iop_status: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine exports"""
+def finalize_workbook(wb, include_batch_billings: bool = False,
+                      include_iop_status: bool = False):
+    """Add Status/Comments columns and validation for Rosanna/Jasmine/Cathy exports.
+
+    Jasmine and Cathy share the same Status dropdown, which adds 'Batch
+    Billings' and 'IOP' to the list Rosanna gets.
+    """
     ws = wb.active
 
     # Insert two columns at E
@@ -276,6 +311,8 @@ def finalize_workbook(wb, include_iop_status: bool = False):
     ws_list = wb.create_sheet("Sheet2")
     status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings",
                     "Utox Batch", "Inclusive Services"]
+    if include_batch_billings:
+        status_items.append("Batch Billings")
     if include_iop_status:
         status_items.append("IOP")
 
@@ -294,23 +331,35 @@ def finalize_workbook(wb, include_iop_status: bool = False):
     for col in range(1, ws.max_column + 1):
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
-def export_staff_workbooks(wb, wb_path, date_token):
+def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
+                           cathy_report: bool = False):
     """Export separate workbooks for Rosanna, Jasmine, and CB.
 
     All staff (Melissa, Unable to Bill, etc.) are still assigned in the
     Masters workbook, but only Rosanna, Jasmine, and CB receive individual
     reports.
+
+    Args:
+        exclude_aetna: When True, Aetna rows are left out of every individual
+            workbook. They still appear in the Masters workbook.
+        cathy_report: When True, also export Cathy's workbook (the
+            Professional-only Oxford/ConnectiCare/UBH rows assign_staff
+            routed to her).
     """
 
     ws = wb.active
     save_folder = get_save_folder(wb_path, date_token)
 
-    # Find Program Level column for WM filtering
+    # Find Program Level column for WM filtering, and Payer for the Aetna
+    # exclusion.
     program_level_col = None
+    payer_col = None
     for col in range(1, ws.max_column + 1):
-        if ws.cell(1, col).value == "Program Level":
+        header = ws.cell(1, col).value
+        if header == "Program Level":
             program_level_col = col
-            break
+        elif header == "Payer":
+            payer_col = col
 
     # Count and warn about WM rows
     wm_count = 0
@@ -325,7 +374,11 @@ def export_staff_workbooks(wb, wb_path, date_token):
             "Only Melissa is authorized to bill WM."
         )
 
-    for staff_name in ["Rosanna", "Jasmine", "CB"]:
+    staff_reports = ["Rosanna", "Jasmine", "CB"]
+    if cathy_report:
+        staff_reports.append("Cathy")
+
+    for staff_name in staff_reports:
         # Create new workbook
         new_wb = openpyxl.Workbook()
         new_ws = new_wb.active
@@ -340,6 +393,11 @@ def export_staff_workbooks(wb, wb_path, date_token):
         for row in range(2, ws.max_row + 1):
             assigned_staff = ws.cell(row, 1).value
             if assigned_staff == staff_name:
+                # Exclude Aetna rows from every individual workbook; they are
+                # still assigned in the Masters workbook.
+                if exclude_aetna and payer_col is not None:
+                    if is_aetna_payer(str(ws.cell(row, payer_col).value or "")):
+                        continue
                 # Skip WM program level rows for all staff except Melissa
                 # (Masters retains all rows; only Melissa bills WM)
                 if (staff_name != "Melissa" and
@@ -354,17 +412,31 @@ def export_staff_workbooks(wb, wb_path, date_token):
             print(f"No rows for {staff_name}, skipping")
             continue
 
-        # Finalize for Rosanna and Jasmine only
-        if staff_name in ["Rosanna", "Jasmine"]:
-            finalize_workbook(new_wb, include_iop_status=(staff_name == "Jasmine"))
+        # Finalize for Rosanna, Jasmine, and Cathy only. Cathy's Status
+        # dropdown carries the same options as Jasmine's.
+        if staff_name in ["Rosanna", "Jasmine", "Cathy"]:
+            jasmine_options = staff_name in ("Jasmine", "Cathy")
+            finalize_workbook(new_wb, include_batch_billings=jasmine_options,
+                              include_iop_status=jasmine_options)
 
         # Save
         save_path = save_folder / f"Unbilled Revenue By Resident and Funding Type {date_token} - {staff_name}.xlsx"
         new_wb.save(save_path)
         print(f"Saved {save_path}")
 
-def main(workbook_path):
-    """Main workflow"""
+def main(workbook_path, include_programming: bool = False, exclude_aetna: bool = False,
+         cathy_report: bool = False):
+    """Main workflow.
+
+    The three optional flags mirror the checkboxes in the Streamlit app and
+    are all off by default, so a plain run follows the standard daily
+    schedule:
+      include_programming - bill Programming (Detox/Residential) regardless
+          of the weekday.
+      exclude_aetna       - keep Aetna rows out of the individual workbooks.
+      cathy_report        - route Professional Oxford/ConnectiCare/UBH rows
+          to Cathy and save her workbook.
+    """
 
     # Load workbook
     wb = openpyxl.load_workbook(workbook_path)
@@ -383,11 +455,14 @@ def main(workbook_path):
     step_1_extract_invalid(ws)
 
     # Step 2-6: Assign staff
-    assign_staff(ws, date_token)
+    assign_staff(ws, date_token, include_programming=include_programming,
+                 assign_cathy=cathy_report)
 
     # Step 7: Export individual workbooks (only if date_token is available)
     if date_token:
-        export_staff_workbooks(wb, workbook_path, date_token)
+        export_staff_workbooks(wb, workbook_path, date_token,
+                               exclude_aetna=exclude_aetna,
+                               cathy_report=cathy_report)
     else:
         print("Skipping individual workbook export due to missing date token")
 
@@ -399,6 +474,28 @@ def main(workbook_path):
 
 if __name__ == "__main__":
     # Optionally allow running from CLI
-    import sys
-    if len(sys.argv) > 1:
-        main(sys.argv[1])
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Process an unbilled revenue workbook."
+    )
+    parser.add_argument("workbook_path", nargs="?",
+                        help="Path to the .xlsx workbook to process.")
+    parser.add_argument("--include-programming", action="store_true",
+                        help="Bill Programming (Detox/Residential) regardless of "
+                             "the weekday, so it can be worked on a Monday or "
+                             "Wednesday.")
+    parser.add_argument("--exclude-aetna", action="store_true",
+                        help="Keep Aetna rows out of the individual staff "
+                             "workbooks (they stay in the Masters workbook).")
+    parser.add_argument("--cathy-report", action="store_true",
+                        help="Assign Professional (CMS-1500/UB-04) Insurance rows "
+                             "for " + ", ".join(CATHY_PAYERS) + " to Cathy and "
+                             "save her workbook.")
+    args = parser.parse_args()
+
+    if args.workbook_path:
+        main(args.workbook_path,
+             include_programming=args.include_programming,
+             exclude_aetna=args.exclude_aetna,
+             cathy_report=args.cathy_report)

@@ -13,6 +13,12 @@ Daily billing schedule:
 - PHP (Partial Hospitalization) always goes to Melissa and isn't governed
   by this weekday schedule at all.
 
+Optional per-run overrides (off by default):
+- include_programming makes Programming billable on any weekday.
+- The Cathy report claims Professional rows for Oxford, ConnectiCare, and
+  UBH (see is_cathy_payer).
+- Excluding Aetna keys off is_aetna_payer.
+
 Rosanna/Jasmine split (Insurance rows only):
 - Rosanna's professional-service row cap by weekday: 150 rows Monday
   through Friday.
@@ -29,6 +35,8 @@ from billing_rules import (
     _is_drug_screen,
     _is_ecare,
     _is_programming_service,
+    is_aetna_payer,
+    is_cathy_payer,
     is_iop_service,
     is_non_billable_service_for_weekday,
     is_php_service,
@@ -261,6 +269,75 @@ def test_case_insensitive_matching():
     assert not is_non_billable_service_for_weekday('IOP', weekday)
 
 
+def test_cathy_payer_variants():
+    """Oxford, ConnectiCare, and UBH are recognized; other payers are not."""
+    assert is_cathy_payer('Oxford')
+    assert is_cathy_payer('OXFORD HEALTH PLANS')
+    assert is_cathy_payer('oxford')
+
+    assert is_cathy_payer('ConnectiCare')
+    assert is_cathy_payer('Connecticare')
+    assert is_cathy_payer('Connecti Care')
+    assert is_cathy_payer('Connecti-Care')
+    assert is_cathy_payer('CONNECTICARE OF NY')
+
+    assert is_cathy_payer('UBH')
+    assert is_cathy_payer('ubh')
+    assert is_cathy_payer('UBH/Optum')
+    assert is_cathy_payer('United Behavioral Health')
+
+    assert not is_cathy_payer('Aetna')
+    assert not is_cathy_payer('Humana')
+    assert not is_cathy_payer('Optum')
+    assert not is_cathy_payer('BCB Anthem CT')
+    assert not is_cathy_payer('')
+    assert not is_cathy_payer(None)
+
+    # 'ubh' only counts as a whole word, so it does not match inside another word.
+    assert not is_cathy_payer('Dubhampton Health')
+
+
+def test_aetna_payer():
+    """Aetna is matched case-insensitively, including longer plan names."""
+    assert is_aetna_payer('Aetna')
+    assert is_aetna_payer('AETNA BETTER HEALTH')
+    assert is_aetna_payer('aetna commercial')
+
+    assert not is_aetna_payer('Humana')
+    assert not is_aetna_payer('Oxford')
+    assert not is_aetna_payer('')
+    assert not is_aetna_payer(None)
+
+
+def test_include_programming_override():
+    """include_programming makes Programming billable on every weekday."""
+    for weekday in range(7):
+        assert not is_non_billable_service_for_weekday(
+            'Detox Admission', weekday, include_programming=True)
+        assert not is_non_billable_service_for_weekday(
+            'Residential Program', weekday, include_programming=True)
+
+    # Monday and Wednesday are the days the override actually changes.
+    for weekday in (0, 2):
+        assert is_non_billable_service_for_weekday('Detox', weekday)
+        assert not is_non_billable_service_for_weekday(
+            'Detox', weekday, include_programming=True)
+
+
+def test_include_programming_leaves_other_rules_alone():
+    """The override only affects Programming: e-care and everything else are unchanged."""
+    for weekday in range(7):
+        # e-care stays Tuesday-only.
+        assert is_non_billable_service_for_weekday(
+            'E-Care Individual', weekday, include_programming=True) == (weekday != 1)
+        # Services outside the daily schedule stay non-billable.
+        assert is_non_billable_service_for_weekday(
+            'Individual Therapy', weekday, include_programming=True)
+        # IOP still bills every day.
+        assert not is_non_billable_service_for_weekday(
+            'Telemed IOP', weekday, include_programming=True)
+
+
 if __name__ == '__main__':
     test_ecare_variants()
     print("✓ test_ecare_variants passed")
@@ -309,5 +386,17 @@ if __name__ == '__main__':
 
     test_case_insensitive_matching()
     print("✓ test_case_insensitive_matching passed")
+
+    test_cathy_payer_variants()
+    print("✓ test_cathy_payer_variants passed")
+
+    test_aetna_payer()
+    print("✓ test_aetna_payer passed")
+
+    test_include_programming_override()
+    print("✓ test_include_programming_override passed")
+
+    test_include_programming_leaves_other_rules_alone()
+    print("✓ test_include_programming_leaves_other_rules_alone passed")
 
     print("\nAll tests passed!")

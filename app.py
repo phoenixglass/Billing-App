@@ -17,7 +17,10 @@ from billing_rules import (
     is_professional_claim_type,
     is_iop_service,
     is_php_service,
+    is_cathy_payer,
+    is_aetna_payer,
     _is_drug_screen as is_drug_screen,
+    CATHY_PAYERS,
     ROSANNA_PROFESSIONAL_CAP,
 )
 
@@ -223,7 +226,8 @@ def step_1_extract_invalid(ws):
 
     return len(invalid_rows) if invalid_rows else 0
 
-def assign_staff(ws, date_token: str = None):
+def assign_staff(ws, date_token: str = None, include_programming: bool = False,
+                 assign_cathy: bool = False):
     """Assign staff names based on the standard daily billing rules.
 
     - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
@@ -241,7 +245,8 @@ def assign_staff(ws, date_token: str = None):
       (i.e. institutional/837I), unless it's PHP (always Melissa's).
     - IOP (including Telemed IOP) always goes to Jasmine, every day of the
       week, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500 or UB-04.
+      Type is CMS-1500 or UB-04 — unless the Cathy report is on and the
+      row is a Professional row for one of her payers, which is hers.
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM/OP WM Program Level, PHP/Partial Hospitalization, or
@@ -251,9 +256,25 @@ def assign_staff(ws, date_token: str = None):
       spreadsheet; she does not get an individual report, and PHP is
       billed only on Tuesdays as an operational matter.
 
+    Two optional, per-run overrides (both off by default) sit on top of the
+    schedule above:
+    - include_programming: Programming (Detox, Residential) is billable
+      regardless of the weekday, so it can be worked on a Monday or
+      Wednesday. E-care is unaffected and stays Tuesday-only.
+    - assign_cathy: every Professional (CMS-1500/UB-04) Insurance row whose
+      Payer is Oxford, ConnectiCare, or UBH goes to Cathy instead of into
+      the Rosanna/Jasmine professional pool, so no row is worked twice.
+      Whatever the service is, it is hers: that includes IOP for those
+      three payers, which she takes ahead of the IOP-to-Jasmine rule. The
+      rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
+      Detox/Residential, and PHP) still take priority.
+
     Args:
         ws: Worksheet to process
         date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
+        include_programming: When True, bill Programming regardless of weekday.
+        assign_cathy: When True, route Oxford/ConnectiCare/UBH Professional
+            Insurance rows to Cathy.
     """
 
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -351,6 +372,17 @@ def assign_staff(ws, date_token: str = None):
             other_rows.append(row)
             continue
 
+        # Cathy (optional): every Professional row for Oxford, ConnectiCare,
+        # and UBH is hers, whatever the service is. That includes IOP, so
+        # this sits ahead of the IOP-to-Jasmine rule below. Her rows leave
+        # the Rosanna/Jasmine professional pool entirely rather than being
+        # worked twice.
+        if (assign_cathy and is_professional_claim_type(claim_type)
+                and is_cathy_payer(payer)):
+            fixed_staff[row] = "Cathy"
+            other_rows.append(row)
+            continue
+
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
         # the week, bypassing the professional pool/Rosanna split even if
         # Claim Type is CMS-1500 or UB-04.
@@ -364,7 +396,8 @@ def assign_staff(ws, date_token: str = None):
             professional_rows.append((row, client))
             continue
 
-        if is_non_billable_service_for_weekday(service, weekday):
+        if is_non_billable_service_for_weekday(
+                service, weekday, include_programming=include_programming):
             fixed_staff[row] = "Unable to Bill"
         else:
             fixed_staff[row] = "Jasmine"
@@ -396,12 +429,13 @@ def assign_staff(ws, date_token: str = None):
 
 def finalize_workbook(wb, include_batch_billings: bool = False, include_iop_status: bool = False,
                       skip_status_columns: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine exports.
+    """Add Status/Comments columns and validation for Rosanna/Jasmine/Cathy exports.
 
     Args:
         wb: Workbook to finalize.
-        include_batch_billings: When True, add 'Batch Billings' to the dropdown (Jasmine only).
-        include_iop_status: When True, add 'IOP' to the dropdown (Jasmine only).
+        include_batch_billings: When True, add 'Batch Billings' to the dropdown
+            (Jasmine and Cathy).
+        include_iop_status: When True, add 'IOP' to the dropdown (Jasmine and Cathy).
         skip_status_columns: When True, skip adding Status/Comments columns (for CB/self-pay).
     """
     ws = wb.active
@@ -511,8 +545,16 @@ def is_bcb_anthem_ct_php_res_detox(payer: str, service: str) -> bool:
 def process_workbook(uploaded_file, exclude_optum: bool = False,
                      exclude_bcb_anthem_ct: bool = False,
                      exclude_anthem_rosanna_jasmine_owm: bool = False,
-                     exclude_detox_residential: bool = False):
-    """Process the uploaded workbook"""
+                     exclude_detox_residential: bool = False,
+                     include_programming: bool = False,
+                     exclude_aetna: bool = False,
+                     cathy_report: bool = False):
+    """Process the uploaded workbook.
+
+    The four exclude_* flags and include_programming/cathy_report are all
+    per-run options driven by the checkboxes below; every one of them is off
+    by default, so an unchecked run follows the standard daily schedule.
+    """
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
@@ -531,7 +573,8 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
         filename_prefix = get_filename_prefix(uploaded_file.name)
 
         invalid_count = step_1_extract_invalid(ws)
-        assign_staff(ws, date_token)
+        assign_staff(ws, date_token, include_programming=include_programming,
+                     assign_cathy=cathy_report)
 
         output_files = {}
 
@@ -557,8 +600,13 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                     wm_count += 1
 
         # Rosanna, Jasmine, and CB always get individual reports (empty ones
-        # are skipped below). Melissa, Unable to Bill, etc. stay Masters-only.
-        for staff_name in ["Rosanna", "Jasmine", "CB"]:
+        # are skipped below); Cathy gets one only when her report is turned
+        # on for this run. Melissa, Unable to Bill, etc. stay Masters-only.
+        staff_reports = ["Rosanna", "Jasmine", "CB"]
+        if cathy_report:
+            staff_reports.append("Cathy")
+
+        for staff_name in staff_reports:
             new_wb = openpyxl.Workbook()
             new_ws = new_wb.active
             new_ws.title = "Sheet1"
@@ -589,6 +637,12 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_anthem_payer(payer_val):
                             continue
+                    # Exclude Aetna rows from every individual workbook;
+                    # they are still assigned in the Masters report.
+                    if exclude_aetna and payer_col is not None:
+                        payer_val = str(ws.cell(row, payer_col).value or "")
+                        if is_aetna_payer(payer_val):
+                            continue
                     if exclude_detox_residential and service_col is not None:
                         service_val = str(ws.cell(row, service_col).value or "").lower()
                         if "detox" in service_val or "residential" in service_val:
@@ -605,9 +659,12 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
             if new_row == 2:
                 continue
 
-            if staff_name in ("Rosanna", "Jasmine"):
-                finalize_workbook(new_wb, include_batch_billings=(staff_name == "Jasmine"),
-                                  include_iop_status=(staff_name == "Jasmine"))
+            if staff_name in ("Rosanna", "Jasmine", "Cathy"):
+                # Cathy's Status dropdown carries the same options as
+                # Jasmine's, Batch Billings and IOP included.
+                jasmine_options = staff_name in ("Jasmine", "Cathy")
+                finalize_workbook(new_wb, include_batch_billings=jasmine_options,
+                                  include_iop_status=jasmine_options)
             elif staff_name == "CB":
                 finalize_workbook(new_wb, skip_status_columns=True)
 
@@ -680,6 +737,51 @@ exclude_detox_residential = st.checkbox(
     help="When checked, Detox and Residential service rows are excluded from all individual staff workbooks. They still appear in the Masters report."
 )
 
+st.markdown("**One-off options for this run**")
+
+include_programming = st.checkbox(
+    "Include Programming (Detox/Residential) today",
+    value=False,
+    help=(
+        "When checked, Programming (Detox, Residential) is billable no matter what "
+        "day it is, so it can be worked on a Monday or Wednesday. Billable "
+        "Programming rows go to Jasmine as usual. E-care is unaffected and stays "
+        "Tuesday-only."
+    )
+)
+
+exclude_aetna = st.checkbox(
+    "Exclude Aetna",
+    value=False,
+    help=(
+        "When checked, every row whose payer is Aetna is excluded from all "
+        "individual staff workbooks. Aetna rows still appear in the Masters report."
+    )
+)
+
+cathy_report = st.checkbox(
+    "Cathy report: Professional services only for "
+    + ", ".join(CATHY_PAYERS),
+    value=False,
+    help=(
+        "When checked, Insurance rows whose Claim Type is Professional (CMS-1500 or "
+        "UB-04) and whose payer is Oxford, ConnectiCare, or UBH are assigned to "
+        "Cathy and saved as her own workbook, whatever the service is — IOP for "
+        "those payers is hers too. Those rows leave the Rosanna/Jasmine "
+        "professional pool, so no row is worked twice — Rosanna's 150-row cap then "
+        "applies to what is left. WM, PHP, and the O'Flynn Karen rule still take "
+        "priority over Cathy."
+    )
+)
+
+if include_programming and exclude_detox_residential:
+    st.warning(
+        "⚠️ 'Include Programming (Detox/Residential) today' and \"Don't give anyone "
+        "Detox or Residential\" are both checked. The exclusion wins: Programming rows "
+        "will be assigned in the Masters report but kept out of every individual "
+        "workbook."
+    )
+
 if uploaded_file is not None:
     try:
         validate_uploaded_file(uploaded_file)
@@ -690,6 +792,9 @@ if uploaded_file is not None:
             exclude_bcb_anthem_ct=exclude_bcb_anthem_ct,
             exclude_anthem_rosanna_jasmine_owm=exclude_anthem_rosanna_jasmine_owm,
             exclude_detox_residential=exclude_detox_residential,
+            include_programming=include_programming,
+            exclude_aetna=exclude_aetna,
+            cathy_report=cathy_report,
         )
 
         if wm_count > 0:
