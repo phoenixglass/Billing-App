@@ -57,7 +57,9 @@ Rosanna's professional-pool cap by weekday:
 | Sat/Sun   | —            | 0 (none) | Not generated              |
 
 Everything past Rosanna's share of the professional pool goes to Jasmine,
-along with any billable Programming/e-care rows for that day.
+along with any billable Programming/e-care rows for that day. The per-run
+"Don't give Rosanna anything" option drops her cap to zero for every day, so
+Jasmine takes the whole pool.
 
 The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
 'extended care' (case-insensitive).
@@ -88,6 +90,8 @@ schedule above. The command-line script takes the same options as flags.
 | Include Programming (Detox/Residential) today | `--include-programming` | Programming bills regardless of the weekday, so it can be worked on a Monday or Wednesday. Billable Programming rows go to Jasmine as usual. E-care is unaffected and stays Tuesday-only. |
 | Exclude Aetna | `--exclude-aetna` | Every Aetna row is left out of the individual workbooks. |
 | Cathy report: Professional services only for Oxford, ConnectiCare, UBH | `--cathy-report` | See the Cathy section below. |
+| Cathy report: all of her payers (ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR) | `--cathy-all-payers` | The same Cathy report run against her full payer list instead of just her usual three. Turns the Cathy report on by itself — the box above does not also need to be checked. See the Cathy section below. |
+| Don't give Rosanna anything | `--no-rosanna` | Rosanna is assigned no rows and gets no workbook; her share of the professional pool goes to Jasmine, the same way it does on a weekend. |
 
 Rows excluded by any of these options are still assigned in the Masters
 workbook — the option only controls what reaches the individual reports.
@@ -99,31 +103,54 @@ shows a warning saying so.
 ### Cathy (optional report)
 
 When the Cathy report is turned on, **every** Insurance row whose `Claim Type`
-is Professional (`CMS-1500` or `UB-04`) **and** whose `Payer` is Oxford,
-ConnectiCare, or UBH is assigned to **Cathy** and saved as her own workbook.
+is Professional (`CMS-1500` or `UB-04`) **and** whose `Payer` is on her payer
+list is assigned to **Cathy** and saved as her own workbook. There are two
+payer lists to choose from:
+
+| Option | Payers |
+|--------|--------|
+| Cathy report: Professional services only for Oxford, ConnectiCare, UBH | Oxford, ConnectiCare, UBH (UBH-HP included — it matches the UBH pattern) |
+| Cathy report: all of her payers | The three above plus Emblem, Surest, UMR — i.e. ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR |
+
+The wider list changes **only** which payers are hers; everything else about
+the report is the same, and checking it runs the Cathy report on its own
+whether or not the narrower box is also checked.
 
 - The service does not matter, only the claim type and the payer. IOP for
-  those three payers is hers too: she takes it ahead of the IOP-to-Jasmine
+  her payers is hers too: she takes it ahead of the IOP-to-Jasmine
   rule. IOP for any other payer, or IOP that is not a Professional claim
   type, is still Jasmine's.
 - Those rows leave the Rosanna/Jasmine professional pool rather than being
   duplicated into it, so no row is worked twice. Rosanna's 150-row cap then
   applies to whatever is left of the pool.
 - Payer matching is case-insensitive and tolerates the spelling variants these
-  payers appear with: `ConnectiCare`/`Connecti Care` and `UBH`/`United
-  Behavioral Health`.
-- Three rules still take priority over Cathy, even for her three payers:
+  payers appear with: `ConnectiCare`/`Connecti Care`, `UBH`/`United
+  Behavioral Health`, and the `(Optum)` suffixes (`Emblem (Optum)`,
+  `Surest (Optum)`, `UBH-HP (Optum)`, `UMR (Optum)`). `UBH` and `UMR` only
+  match as whole words, so they are not picked up inside a longer word.
+- Three rules still take priority over Cathy, even for her own payers:
   WM/OP WM (Melissa — only she is authorized to bill WM), PHP (Melissa), and
   Billing Provider "O'Flynn, Karen" in OP Chappaqua/OP NYC (always Unable to
   Bill). Self Pay rows still go to CB.
 - Her workbook gets Status/Comments columns whose dropdown carries the same
   options as Jasmine's, Batch Billings and IOP included.
 
+### Giving Rosanna nothing (optional)
+
+When "Don't give Rosanna anything" is turned on, Rosanna is assigned no rows
+for that run and no workbook is generated for her. Her share of the
+professional pool goes to **Jasmine** instead — the same thing that already
+happens on a weekend, when Rosanna's cap is zero. Nothing is left unassigned:
+every row still appears in the Masters workbook with an owner, and the rules
+that never involved Rosanna (Self Pay to CB, Melissa's rows, Cathy's rows when
+her report is on) are untouched.
+
 ## Reports
 
 Individual workbooks are generated for **Rosanna**, **Jasmine**, and **CB**
-(empty reports are skipped, e.g. Rosanna on weekends), plus **Cathy** when her
-report is turned on for the run. All other staff (Melissa, Unable to Bill,
+(empty reports are skipped, e.g. Rosanna on weekends, and Rosanna's is not
+generated at all when "Don't give Rosanna anything" is on), plus **Cathy** when
+her report is turned on for the run. All other staff (Melissa, Unable to Bill,
 etc.) are still assigned in the Masters workbook but do not receive separate
 reports.
 
@@ -159,6 +186,9 @@ Add any of the per-run flags as needed, for example:
 
 ```bash
 python "Unbilled Step 1.py" "path/to/file.xlsx" --include-programming --exclude-aetna --cathy-report
+
+# Cathy's full payer list, and nothing for Rosanna:
+python "Unbilled Step 1.py" "path/to/file.xlsx" --cathy-all-payers --no-rosanna
 ```
 
 ## Testing

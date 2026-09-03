@@ -50,6 +50,14 @@ standard schedule unless the operator turns it on for that run):
   worked twice. Whatever the service is, it is hers — including IOP for
   those three payers, which she takes ahead of the IOP-to-Jasmine rule.
   WM, PHP and the O'Flynn Karen rule still take priority over it.
+- Cathy report, all of her payers: the same report run against Cathy's
+  full payer list (see is_cathy_all_payer / CATHY_ALL_PAYERS) instead of
+  just her usual three. Only the payer list widens; it is still
+  Professional Insurance rows only, and it turns the Cathy report on by
+  itself.
+- Nothing for Rosanna: give Rosanna no rows at all for the run. Her share
+  of the professional pool goes to Jasmine instead, exactly as it does on
+  a weekend, and no workbook is generated for her.
 - Exclude Aetna: drop Aetna rows (see is_aetna_payer) from the individual
   staff reports; they stay in the Masters workbook.
 """
@@ -73,6 +81,18 @@ ROSANNA_PROFESSIONAL_CAP = {0: 150, 1: 150, 2: 150, 3: 150, 4: 150}
 CATHY_PAYERS = ("Oxford", "ConnectiCare", "UBH")
 _CATHY_PAYER_RE = re.compile(
     r"oxford|connecti[\s\-]?care|\bubh\b|united\s+behavioral\s+health",
+    re.IGNORECASE,
+)
+
+# The full payer list Cathy can be given for a run: her usual three plus the
+# Optum-family plans that sit alongside them in the report's payer filter.
+# "UBH-HP" is spelled out here for the operator's benefit, but it already
+# matches the UBH pattern above, so it is Cathy's under either payer list.
+CATHY_ALL_PAYERS = ("ConnectiCare", "Emblem", "Oxford", "Surest", "UBH",
+                    "UBH-HP", "UMR")
+_CATHY_ALL_PAYER_RE = re.compile(
+    r"oxford|connecti[\s\-]?care|\bubh\b|united\s+behavioral\s+health"
+    r"|emblem|surest|\bumr\b",
     re.IGNORECASE,
 )
 
@@ -145,6 +165,17 @@ def is_cathy_payer(payer: str) -> bool:
     (CMS-1500/UB-04) Insurance rows for these three payers.
     """
     return bool(_CATHY_PAYER_RE.search(payer or ""))
+
+
+def is_cathy_all_payer(payer: str) -> bool:
+    """Return True if the Payer column value is on Cathy's full payer list.
+
+    A superset of is_cathy_payer: her usual three payers plus Emblem,
+    Surest, UBH-HP and UMR. Used by the optional "all of her payers"
+    variant of the Cathy report, which is otherwise identical — still
+    Professional (CMS-1500/UB-04) Insurance rows only.
+    """
+    return bool(_CATHY_ALL_PAYER_RE.search(payer or ""))
 
 
 def is_aetna_payer(payer: str) -> bool:

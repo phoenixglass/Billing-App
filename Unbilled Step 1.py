@@ -12,9 +12,11 @@ from billing_rules import (
     is_iop_service,
     is_php_service,
     is_cathy_payer,
+    is_cathy_all_payer,
     is_aetna_payer,
     _is_drug_screen as is_drug_screen,
     CATHY_PAYERS,
+    CATHY_ALL_PAYERS,
     ROSANNA_PROFESSIONAL_CAP,
 )
 
@@ -113,7 +115,8 @@ def step_1_extract_invalid(ws):
     return len(invalid_rows)
 
 def assign_staff(ws, date_token: str = None, include_programming: bool = False,
-                 assign_cathy: bool = False):
+                 assign_cathy: bool = False, cathy_all_payers: bool = False,
+                 skip_rosanna: bool = False):
     """Assign staff names based on the standard daily billing rules.
 
     - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
@@ -142,7 +145,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       spreadsheet; she does not get an individual report, and PHP is
       billed only on Tuesdays as an operational matter.
 
-    Two optional, per-run overrides (both off by default) sit on top of the
+    Four optional, per-run overrides (all off by default) sit on top of the
     schedule above:
     - include_programming: Programming (Detox, Residential) is billable
       regardless of the weekday, so it can be worked on a Monday or
@@ -154,6 +157,15 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       three payers, which she takes ahead of the IOP-to-Jasmine rule. The
       rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
       Detox/Residential, and PHP) still take priority.
+    - cathy_all_payers: run that same Cathy rule against her full payer
+      list (CATHY_ALL_PAYERS) instead of just her usual three — adding
+      Emblem, Surest, UBH-HP and UMR. Only the payer list widens: it is
+      still Professional Insurance rows only, and the same rules still
+      take priority over her. This turns the Cathy report on by itself,
+      whether or not assign_cathy is also set.
+    - skip_rosanna: Rosanna is given no rows at all. The whole professional
+      pool left after Cathy's goes to Jasmine, exactly as it does on a
+      weekend.
     """
 
     cols = {}
@@ -187,7 +199,14 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     else:
         print(f"Using date from filename: {date_token} (weekday={weekday})")
 
-    rosanna_cap = ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
+    # "All of her payers" implies the Cathy report: turning that option on
+    # alone is enough to run it.
+    assign_cathy = assign_cathy or cathy_all_payers
+    is_cathy_row_payer = is_cathy_all_payer if cathy_all_payers else is_cathy_payer
+
+    # Rosanna takes nothing when skip_rosanna is on, so the whole pool falls
+    # to Jasmine — the same path a weekend already takes.
+    rosanna_cap = 0 if skip_rosanna else ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
     if rosanna_cap:
         capped_staff, professional_cap = "Rosanna", rosanna_cap
     else:
@@ -242,13 +261,12 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
-        # Cathy (optional): every Professional row for Oxford, ConnectiCare,
-        # and UBH is hers, whatever the service is. That includes IOP, so
-        # this sits ahead of the IOP-to-Jasmine rule below. Her rows leave
-        # the Rosanna/Jasmine professional pool entirely rather than being
-        # worked twice.
+        # Cathy (optional): every Professional row for her payers is hers,
+        # whatever the service is. That includes IOP, so this sits ahead of
+        # the IOP-to-Jasmine rule below. Her rows leave the Rosanna/Jasmine
+        # professional pool entirely rather than being worked twice.
         if (assign_cathy and is_professional_claim_type(claim_type)
-                and is_cathy_payer(payer)):
+                and is_cathy_row_payer(payer)):
             fixed_staff[row] = "Cathy"
             other_rows.append(row)
             continue
@@ -332,7 +350,7 @@ def finalize_workbook(wb, include_batch_billings: bool = False,
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
 def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
-                           cathy_report: bool = False):
+                           cathy_report: bool = False, skip_rosanna: bool = False):
     """Export separate workbooks for Rosanna, Jasmine, and CB.
 
     All staff (Melissa, Unable to Bill, etc.) are still assigned in the
@@ -343,8 +361,10 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
         exclude_aetna: When True, Aetna rows are left out of every individual
             workbook. They still appear in the Masters workbook.
         cathy_report: When True, also export Cathy's workbook (the
-            Professional-only Oxford/ConnectiCare/UBH rows assign_staff
-            routed to her).
+            Professional-only rows for her payers that assign_staff routed
+            to her).
+        skip_rosanna: When True, no workbook is exported for Rosanna — she
+            was assigned nothing for this run.
     """
 
     ws = wb.active
@@ -374,7 +394,7 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
             "Only Melissa is authorized to bill WM."
         )
 
-    staff_reports = ["Rosanna", "Jasmine", "CB"]
+    staff_reports = ["Jasmine", "CB"] if skip_rosanna else ["Rosanna", "Jasmine", "CB"]
     if cathy_report:
         staff_reports.append("Cathy")
 
@@ -425,10 +445,11 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
         print(f"Saved {save_path}")
 
 def main(workbook_path, include_programming: bool = False, exclude_aetna: bool = False,
-         cathy_report: bool = False):
+         cathy_report: bool = False, cathy_all_payers: bool = False,
+         skip_rosanna: bool = False):
     """Main workflow.
 
-    The three optional flags mirror the checkboxes in the Streamlit app and
+    The five optional flags mirror the checkboxes in the Streamlit app and
     are all off by default, so a plain run follows the standard daily
     schedule:
       include_programming - bill Programming (Detox/Residential) regardless
@@ -436,7 +457,14 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
       exclude_aetna       - keep Aetna rows out of the individual workbooks.
       cathy_report        - route Professional Oxford/ConnectiCare/UBH rows
           to Cathy and save her workbook.
+      cathy_all_payers    - run the Cathy report against her full payer list
+          (CATHY_ALL_PAYERS) instead of her usual three; turns the report on
+          by itself.
+      skip_rosanna        - give Rosanna nothing: Jasmine takes the whole
+          professional pool and no workbook is saved for Rosanna.
     """
+    # "All of her payers" runs the Cathy report on its own.
+    cathy_report = cathy_report or cathy_all_payers
 
     # Load workbook
     wb = openpyxl.load_workbook(workbook_path)
@@ -456,13 +484,15 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
 
     # Step 2-6: Assign staff
     assign_staff(ws, date_token, include_programming=include_programming,
-                 assign_cathy=cathy_report)
+                 assign_cathy=cathy_report, cathy_all_payers=cathy_all_payers,
+                 skip_rosanna=skip_rosanna)
 
     # Step 7: Export individual workbooks (only if date_token is available)
     if date_token:
         export_staff_workbooks(wb, workbook_path, date_token,
                                exclude_aetna=exclude_aetna,
-                               cathy_report=cathy_report)
+                               cathy_report=cathy_report,
+                               skip_rosanna=skip_rosanna)
     else:
         print("Skipping individual workbook export due to missing date token")
 
@@ -492,10 +522,21 @@ if __name__ == "__main__":
                         help="Assign Professional (CMS-1500/UB-04) Insurance rows "
                              "for " + ", ".join(CATHY_PAYERS) + " to Cathy and "
                              "save her workbook.")
+    parser.add_argument("--cathy-all-payers", action="store_true",
+                        help="Run the Cathy report against her full payer list ("
+                             + ", ".join(CATHY_ALL_PAYERS) + ") instead of just "
+                             "her usual three. Turns the Cathy report on by "
+                             "itself; --cathy-report is not also needed.")
+    parser.add_argument("--no-rosanna", action="store_true", dest="skip_rosanna",
+                        help="Give Rosanna nothing for this run: Jasmine takes the "
+                             "whole Professional pool and no workbook is saved for "
+                             "Rosanna.")
     args = parser.parse_args()
 
     if args.workbook_path:
         main(args.workbook_path,
              include_programming=args.include_programming,
              exclude_aetna=args.exclude_aetna,
-             cathy_report=args.cathy_report)
+             cathy_report=args.cathy_report,
+             cathy_all_payers=args.cathy_all_payers,
+             skip_rosanna=args.skip_rosanna)

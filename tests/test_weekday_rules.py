@@ -16,7 +16,10 @@ Daily billing schedule:
 Optional per-run overrides (off by default):
 - include_programming makes Programming billable on any weekday.
 - The Cathy report claims Professional rows for Oxford, ConnectiCare, and
-  UBH (see is_cathy_payer).
+  UBH (see is_cathy_payer), or for her full payer list when the "all of her
+  payers" variant is on (see is_cathy_all_payer).
+- Giving Rosanna nothing for a run drops her cap to zero, so Jasmine takes
+  the whole professional pool.
 - Excluding Aetna keys off is_aetna_payer.
 
 Rosanna/Jasmine split (Insurance rows only):
@@ -37,6 +40,7 @@ from billing_rules import (
     _is_programming_service,
     is_aetna_payer,
     is_cathy_payer,
+    is_cathy_all_payer,
     is_iop_service,
     is_non_billable_service_for_weekday,
     is_php_service,
@@ -297,6 +301,40 @@ def test_cathy_payer_variants():
     assert not is_cathy_payer('Dubhampton Health')
 
 
+def test_cathy_all_payer_variants():
+    """Cathy's full payer list adds Emblem, Surest, UBH-HP, and UMR."""
+    # Her usual three still match: the full list is a superset.
+    assert is_cathy_all_payer('Oxford')
+    assert is_cathy_all_payer('ConnectiCare')
+    assert is_cathy_all_payer('United Behavioral Health')
+
+    assert is_cathy_all_payer('Emblem (Optum)')
+    assert is_cathy_all_payer('EMBLEM HEALTH')
+    assert is_cathy_all_payer('Surest (Optum)')
+    assert is_cathy_all_payer('surest')
+    assert is_cathy_all_payer('UMR (Optum)')
+    assert is_cathy_all_payer('umr')
+
+    # UBH-HP already matches the UBH pattern, so it is hers on either list.
+    assert is_cathy_all_payer('UBH-HP (Optum)')
+    assert is_cathy_payer('UBH-HP (Optum)')
+
+    # Payers outside the filter list stay out, on either list.
+    assert not is_cathy_all_payer('Aetna')
+    assert not is_cathy_all_payer('Optum')
+    assert not is_cathy_all_payer('Magellan')
+    assert not is_cathy_all_payer('BCBS - Other NY')
+    assert not is_cathy_all_payer('')
+    assert not is_cathy_all_payer(None)
+
+    # 'umr' only counts as a whole word, so it does not match inside another.
+    assert not is_cathy_all_payer('Sumrall Health')
+
+    # The narrow list does not pick up the added payers.
+    for payer in ('Emblem (Optum)', 'Surest (Optum)', 'UMR (Optum)'):
+        assert not is_cathy_payer(payer), payer
+
+
 def test_aetna_payer():
     """Aetna is matched case-insensitively, including longer plan names."""
     assert is_aetna_payer('Aetna')
@@ -389,6 +427,9 @@ if __name__ == '__main__':
 
     test_cathy_payer_variants()
     print("✓ test_cathy_payer_variants passed")
+
+    test_cathy_all_payer_variants()
+    print("✓ test_cathy_all_payer_variants passed")
 
     test_aetna_payer()
     print("✓ test_aetna_payer passed")

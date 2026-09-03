@@ -18,9 +18,11 @@ from billing_rules import (
     is_iop_service,
     is_php_service,
     is_cathy_payer,
+    is_cathy_all_payer,
     is_aetna_payer,
     _is_drug_screen as is_drug_screen,
     CATHY_PAYERS,
+    CATHY_ALL_PAYERS,
     ROSANNA_PROFESSIONAL_CAP,
 )
 
@@ -227,7 +229,8 @@ def step_1_extract_invalid(ws):
     return len(invalid_rows) if invalid_rows else 0
 
 def assign_staff(ws, date_token: str = None, include_programming: bool = False,
-                 assign_cathy: bool = False):
+                 assign_cathy: bool = False, cathy_all_payers: bool = False,
+                 skip_rosanna: bool = False):
     """Assign staff names based on the standard daily billing rules.
 
     - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
@@ -256,7 +259,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       spreadsheet; she does not get an individual report, and PHP is
       billed only on Tuesdays as an operational matter.
 
-    Two optional, per-run overrides (both off by default) sit on top of the
+    Four optional, per-run overrides (all off by default) sit on top of the
     schedule above:
     - include_programming: Programming (Detox, Residential) is billable
       regardless of the weekday, so it can be worked on a Monday or
@@ -268,6 +271,15 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       three payers, which she takes ahead of the IOP-to-Jasmine rule. The
       rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
       Detox/Residential, and PHP) still take priority.
+    - cathy_all_payers: run that same Cathy rule against her full payer
+      list (CATHY_ALL_PAYERS) instead of just her usual three — adding
+      Emblem, Surest, UBH-HP and UMR. Only the payer list widens: it is
+      still Professional Insurance rows only, and the same rules still
+      take priority over her. This turns the Cathy report on by itself,
+      whether or not assign_cathy is also set.
+    - skip_rosanna: Rosanna is given no rows at all. The whole professional
+      pool left after Cathy's goes to Jasmine, exactly as it does on a
+      weekend.
 
     Args:
         ws: Worksheet to process
@@ -275,6 +287,10 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
         include_programming: When True, bill Programming regardless of weekday.
         assign_cathy: When True, route Oxford/ConnectiCare/UBH Professional
             Insurance rows to Cathy.
+        cathy_all_payers: When True, give Cathy her full payer list instead
+            of her usual three, and turn her report on by itself.
+        skip_rosanna: When True, assign Rosanna nothing; Jasmine takes the
+            whole professional pool.
     """
 
     # Find column indices (after Staff/Status insert, columns shift by 1)
@@ -309,7 +325,14 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     else:
         print(f"Using date from filename: {date_token} (weekday={weekday})")
 
-    rosanna_cap = ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
+    # "All of her payers" implies the Cathy report: checking that option
+    # alone is enough to run it.
+    assign_cathy = assign_cathy or cathy_all_payers
+    is_cathy_row_payer = is_cathy_all_payer if cathy_all_payers else is_cathy_payer
+
+    # Rosanna takes nothing when skip_rosanna is on, so the whole pool falls
+    # to Jasmine — the same path a weekend already takes.
+    rosanna_cap = 0 if skip_rosanna else ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
     if rosanna_cap:
         capped_staff, professional_cap = "Rosanna", rosanna_cap
     else:
@@ -372,13 +395,12 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
-        # Cathy (optional): every Professional row for Oxford, ConnectiCare,
-        # and UBH is hers, whatever the service is. That includes IOP, so
-        # this sits ahead of the IOP-to-Jasmine rule below. Her rows leave
-        # the Rosanna/Jasmine professional pool entirely rather than being
-        # worked twice.
+        # Cathy (optional): every Professional row for her payers is hers,
+        # whatever the service is. That includes IOP, so this sits ahead of
+        # the IOP-to-Jasmine rule below. Her rows leave the Rosanna/Jasmine
+        # professional pool entirely rather than being worked twice.
         if (assign_cathy and is_professional_claim_type(claim_type)
-                and is_cathy_payer(payer)):
+                and is_cathy_row_payer(payer)):
             fixed_staff[row] = "Cathy"
             other_rows.append(row)
             continue
@@ -548,13 +570,19 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                      exclude_detox_residential: bool = False,
                      include_programming: bool = False,
                      exclude_aetna: bool = False,
-                     cathy_report: bool = False):
+                     cathy_report: bool = False,
+                     cathy_all_payers: bool = False,
+                     skip_rosanna: bool = False):
     """Process the uploaded workbook.
 
-    The four exclude_* flags and include_programming/cathy_report are all
-    per-run options driven by the checkboxes below; every one of them is off
-    by default, so an unchecked run follows the standard daily schedule.
+    The four exclude_* flags and include_programming/cathy_report/
+    cathy_all_payers/skip_rosanna are all per-run options driven by the
+    checkboxes below; every one of them is off by default, so an unchecked
+    run follows the standard daily schedule.
     """
+    # "Cathy report: all of her payers" runs her report by itself, so the
+    # operator only has to check the one box.
+    cathy_report = cathy_report or cathy_all_payers
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
@@ -574,7 +602,9 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
 
         invalid_count = step_1_extract_invalid(ws)
         assign_staff(ws, date_token, include_programming=include_programming,
-                     assign_cathy=cathy_report)
+                     assign_cathy=cathy_report,
+                     cathy_all_payers=cathy_all_payers,
+                     skip_rosanna=skip_rosanna)
 
         output_files = {}
 
@@ -601,8 +631,9 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
 
         # Rosanna, Jasmine, and CB always get individual reports (empty ones
         # are skipped below); Cathy gets one only when her report is turned
-        # on for this run. Melissa, Unable to Bill, etc. stay Masters-only.
-        staff_reports = ["Rosanna", "Jasmine", "CB"]
+        # on for this run, and Rosanna none at all when she is skipped.
+        # Melissa, Unable to Bill, etc. stay Masters-only.
+        staff_reports = ["Jasmine", "CB"] if skip_rosanna else ["Rosanna", "Jasmine", "CB"]
         if cathy_report:
             staff_reports.append("Cathy")
 
@@ -774,6 +805,33 @@ cathy_report = st.checkbox(
     )
 )
 
+cathy_all_payers = st.checkbox(
+    "Cathy report: all of her payers ("
+    + ", ".join(CATHY_ALL_PAYERS)
+    + ")",
+    value=False,
+    help=(
+        "The same Cathy report, run against her full payer list instead of just "
+        "her usual three: it adds Emblem, Surest, UBH-HP, and UMR. Only the payer "
+        "list widens — it is still Professional (CMS-1500/UB-04) Insurance rows "
+        "only, they still leave the Rosanna/Jasmine pool so no row is worked "
+        "twice, and WM, PHP, and the O'Flynn Karen rule still take priority. "
+        "Checking this runs the Cathy report on its own; the box above does not "
+        "also need to be checked."
+    )
+)
+
+skip_rosanna = st.checkbox(
+    "Don't give Rosanna anything",
+    value=False,
+    help=(
+        "When checked, Rosanna is assigned no rows for this run and no workbook "
+        "is generated for her. Her share of the Professional pool goes to Jasmine "
+        "instead, the same way it does on a weekend. Nothing is left unassigned: "
+        "every row still appears in the Masters report with an owner."
+    )
+)
+
 if include_programming and exclude_detox_residential:
     st.warning(
         "⚠️ 'Include Programming (Detox/Residential) today' and \"Don't give anyone "
@@ -795,6 +853,8 @@ if uploaded_file is not None:
             include_programming=include_programming,
             exclude_aetna=exclude_aetna,
             cathy_report=cathy_report,
+            cathy_all_payers=cathy_all_payers,
+            skip_rosanna=skip_rosanna,
         )
 
         if wm_count > 0:
