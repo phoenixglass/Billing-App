@@ -1,25 +1,18 @@
 import openpyxl
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.datavalidation import DataValidation
 from pathlib import Path
 import re
 from datetime import datetime
 
 from billing_rules import (
-    parse_weekday_from_token,
-    is_non_billable_service_for_weekday,
-    is_professional_claim_type,
-    is_iop_service,
-    is_php_service,
-    is_cathy_payer,
-    is_cathy_all_payer,
     is_aetna_payer,
-    _is_drug_screen as is_drug_screen,
+    is_wm_program_level,
     CATHY_PAYERS,
     CATHY_ALL_PAYERS,
-    ROSANNA_PROFESSIONAL_CAP,
+    validate_custom_report_name,
     parse_terms,
     matches_any_term,
+    assign_staff,
+    finalize_workbook,
 )
 
 stubs_required = False  # no Streamlit in the standalone script; keep for parity if needed
@@ -30,10 +23,6 @@ def extract_date_from_filename(filename):
     if match:
         return match.group(1)
     return None
-
-def is_wm_program_level(cell_value) -> bool:
-    """Return True if the Program Level cell contains 'WM'."""
-    return "WM" in str(cell_value or "").upper()
 
 def get_save_folder(workbook_path, date_token):
     """Build save path: ...\\Unbilled Reports\\YYYY\\MM - Month YYYY\\MMDDYYYY"""
@@ -116,246 +105,12 @@ def step_1_extract_invalid(ws):
     print(f"Extracted {len(invalid_rows)} invalid rows to 'Invalid' sheet")
     return len(invalid_rows)
 
-def assign_staff(ws, date_token: str = None, include_programming: bool = False,
-                 assign_cathy: bool = False, cathy_all_payers: bool = False,
-                 skip_rosanna: bool = False):
-    """Assign staff names based on the standard daily billing rules.
-
-    - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
-      bills every day, with no exceptions.
-    - Jasmine and Rosanna only ever receive GROUPFLD2 == "Insurance" rows.
-    - Among Insurance rows, the "professional pool" is every row whose
-      Claim Type is CMS-1500 or UB-04 (UB-04 counts as Professional every
-      day), sorted alphabetically by Client. Monday through Friday,
-      Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday] (150)
-      of that sorted pool; the rest of the pool goes to Jasmine. Rosanna
-      caps no rows on weekends, so Jasmine gets the whole pool those days.
-    - Jasmine also receives Insurance rows that are billable Programming
-      (Detox, Residential) or e-care for that weekday, as well as any
-      other billable Insurance row whose Claim Type is not CMS-1500/UB-04
-      (i.e. institutional/837I), unless it's PHP (always Melissa's).
-    - IOP (including Telemed IOP) always goes to Jasmine, every day of the
-      week, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500 or UB-04 — unless the Cathy report is on and the
-      row is a Professional row for one of her payers, which is hers.
-    - Any other Insurance row (not billable that day), or any row that is
-      neither Self Pay nor Insurance, is Unable to Bill.
-    - Melissa (WM Program Level, PHP/Partial Hospitalization, or
-      Aetna/Humana Detox/Residential) and the O'Flynn Karen OP
-      Chappaqua/OP NYC "Unable to Bill" rule take priority over all of the
-      above. PHP rows are assigned to Melissa every day in the Masters
-      spreadsheet; she does not get an individual report, and PHP is
-      billed only on Tuesdays as an operational matter.
-
-    Four optional, per-run overrides (all off by default) sit on top of the
-    schedule above:
-    - include_programming: Programming (Detox, Residential) is billable
-      regardless of the weekday, so it can be worked on a Monday or
-      Wednesday. E-care is unaffected and stays Tuesday-only.
-    - assign_cathy: every Professional (CMS-1500/UB-04) Insurance row whose
-      Payer is Oxford, ConnectiCare, or UBH goes to Cathy instead of into
-      the Rosanna/Jasmine professional pool, so no row is worked twice.
-      Whatever the service is, it is hers: that includes IOP for those
-      three payers, which she takes ahead of the IOP-to-Jasmine rule. The
-      rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
-      Detox/Residential, and PHP) still take priority.
-    - cathy_all_payers: run that same Cathy rule against her full payer
-      list (CATHY_ALL_PAYERS) instead of just her usual three — adding
-      Emblem, Surest, UBH-HP and UMR. Only the payer list widens: it is
-      still Professional Insurance rows only, and the same rules still
-      take priority over her. This turns the Cathy report on by itself,
-      whether or not assign_cathy is also set.
-    - skip_rosanna: Rosanna is given no rows at all. The whole professional
-      pool left after Cathy's goes to Jasmine, exactly as it does on a
-      weekend.
-    """
-
-    cols = {}
-    for col in range(1, ws.max_column + 1):
-        header = ws.cell(1, col).value
-        if header == "GROUPFLD2":
-            cols['group'] = col
-        elif header == "GROUPFLD1":
-            cols['group_fld1'] = col
-        elif header == "Service":
-            cols['service'] = col
-        elif header == "Payer":
-            cols['payer'] = col
-        elif header == "Billing Provider":
-            cols['billing_provider'] = col
-        elif header == "Program Level":
-            cols['program_level'] = col
-        elif header == "Client":
-            cols['client'] = col
-        elif header == "Claim Type":
-            cols['claim_type'] = col
-
-    if not all(k in cols for k in ['group', 'service', 'payer', 'claim_type', 'client']):
-        raise ValueError(
-            "Missing required columns: GROUPFLD2, Service, Payer, Claim Type, or Client"
-        )
-
-    weekday, did_fallback = parse_weekday_from_token(date_token)
-    if did_fallback:
-        print(f"Failed to parse date_token '{date_token}', using current weekday={weekday}")
-    else:
-        print(f"Using date from filename: {date_token} (weekday={weekday})")
-
-    # "All of her payers" implies the Cathy report: turning that option on
-    # alone is enough to run it.
-    assign_cathy = assign_cathy or cathy_all_payers
-    is_cathy_row_payer = is_cathy_all_payer if cathy_all_payers else is_cathy_payer
-
-    # Rosanna takes nothing when skip_rosanna is on, so the whole pool falls
-    # to Jasmine — the same path a weekend already takes.
-    rosanna_cap = 0 if skip_rosanna else ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
-    if rosanna_cap:
-        capped_staff, professional_cap = "Rosanna", rosanna_cap
-    else:
-        capped_staff, professional_cap = None, 0
-
-    row_data_map = {}
-    fixed_staff = {}
-    professional_rows = []
-    other_rows = []
-
-    for row in range(2, ws.max_row + 1):
-        row_data_map[row] = [ws.cell(row, col).value for col in range(1, ws.max_column + 1)]
-
-        group = str(ws.cell(row, cols['group']).value or "").strip()
-        service = str(ws.cell(row, cols['service']).value or "")
-        payer = str(ws.cell(row, cols['payer']).value or "").lower()
-        claim_type = str(ws.cell(row, cols['claim_type']).value or "")
-
-        if group == "Self Pay":
-            fixed_staff[row] = "CB"
-            other_rows.append(row)
-            continue
-
-        staff = None
-
-        if 'program_level' in cols and is_wm_program_level(ws.cell(row, cols['program_level']).value):
-            staff = "Melissa"
-
-        if not staff and 'billing_provider' in cols and 'group_fld1' in cols:
-            billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
-            group_fld1 = str(ws.cell(row, cols['group_fld1']).value or "").strip()
-            if billing_provider == "O'Flynn, Karen" and group_fld1 in ("OP Chappaqua", "OP NYC"):
-                staff = "Unable to Bill"
-
-        if not staff:
-            service_lower = service.lower()
-            has_detox_res = ("detox" in service_lower or "residential" in service_lower)
-            has_insurance = "aetna" in payer or "humana" in payer
-            if has_detox_res and has_insurance and not is_drug_screen(service):
-                staff = "Melissa"
-
-        if not staff and is_php_service(service):
-            staff = "Melissa"
-
-        if staff:
-            fixed_staff[row] = staff
-            other_rows.append(row)
-            continue
-
-        if group != "Insurance":
-            fixed_staff[row] = "Unable to Bill"
-            other_rows.append(row)
-            continue
-
-        # Cathy (optional): every Professional row for her payers is hers,
-        # whatever the service is. That includes IOP, so this sits ahead of
-        # the IOP-to-Jasmine rule below. Her rows leave the Rosanna/Jasmine
-        # professional pool entirely rather than being worked twice.
-        if (assign_cathy and is_professional_claim_type(claim_type)
-                and is_cathy_row_payer(payer)):
-            fixed_staff[row] = "Cathy"
-            other_rows.append(row)
-            continue
-
-        # IOP (including Telemed IOP) always goes to Jasmine, every day of
-        # the week, bypassing the professional pool/Rosanna split even if
-        # Claim Type is CMS-1500 or UB-04.
-        if is_iop_service(service):
-            fixed_staff[row] = "Jasmine"
-            other_rows.append(row)
-            continue
-
-        if is_professional_claim_type(claim_type):
-            client = str(ws.cell(row, cols['client']).value or "").strip()
-            professional_rows.append((row, client))
-            continue
-
-        if is_non_billable_service_for_weekday(
-                service, weekday, include_programming=include_programming):
-            fixed_staff[row] = "Unable to Bill"
-        else:
-            fixed_staff[row] = "Jasmine"
-        other_rows.append(row)
-
-    professional_rows.sort(key=lambda x: x[1].lower())
-
-    ordered_rows = [row for row, _ in professional_rows] + other_rows
-    new_row_pos = 2
-    for original_row in ordered_rows:
-        for col in range(1, ws.max_column + 1):
-            ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
-        new_row_pos += 1
-
-    num_capped = min(professional_cap, len(professional_rows))
-    new_row_pos = 2
-    for idx in range(len(professional_rows)):
-        ws.cell(new_row_pos, 1).value = capped_staff if (capped_staff and idx < num_capped) else "Jasmine"
-        new_row_pos += 1
-    for original_row in other_rows:
-        ws.cell(new_row_pos, 1).value = fixed_staff[original_row]
-        new_row_pos += 1
-
-    print("Staff assignment complete")
-
-def finalize_workbook(wb, include_batch_billings: bool = False,
-                      include_iop_status: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine/Cathy exports.
-
-    Jasmine and Cathy share the same Status dropdown, which adds 'Batch
-    Billings' and 'IOP' to the list Rosanna gets.
-    """
-    ws = wb.active
-
-    # Insert two columns at E
-    ws.insert_cols(5, 2)
-    ws.cell(1, 5).value = "Status"
-    ws.cell(1, 6).value = "Comments"
-
-    # Create Sheet2 with validation list
-    ws_list = wb.create_sheet("Sheet2")
-    status_items = ["Billed", "Unable to Bill", "Contractual Adj", "Incomplete Billings",
-                    "Utox Batch", "Inclusive Services"]
-    if include_batch_billings:
-        status_items.append("Batch Billings")
-    if include_iop_status:
-        status_items.append("IOP")
-
-    for idx, item in enumerate(status_items, start=1):
-        ws_list[f'A{idx}'] = item
-    list_range = f"=Sheet2!$A$1:$A${len(status_items)}"
-
-    # Add data validation to Status column
-    dv = DataValidation(type="list", formula1=list_range, allow_blank=True)
-    ws.add_data_validation(dv)
-
-    last_row = ws.max_row
-    dv.add(f'E2:E{last_row}')
-
-    # Auto-fit columns
-    for col in range(1, ws.max_column + 1):
-        ws.column_dimensions[get_column_letter(col)].auto_size = True
-
 def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
                            cathy_report: bool = False, skip_rosanna: bool = False,
                            exclude_payer_terms: list = None,
                            exclude_service_terms: list = None,
-                           exclude_scope: list = None):
+                           exclude_scope: list = None,
+                           custom_report_name: str = None):
     """Export separate workbooks for Rosanna, Jasmine, and CB.
 
     All staff (Melissa, Unable to Bill, etc.) are still assigned in the
@@ -377,6 +132,9 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
         exclude_scope: staff names (--exclude-scope) the two custom
             exclusions apply to. Empty/None applies them to everyone, same
             as exclude_aetna.
+        custom_report_name: when set, also export this staff member's
+            workbook (the rows assign_staff routed to them via
+            --custom-report-name/--custom-report-payers).
     """
 
     ws = wb.active
@@ -412,6 +170,8 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
     staff_reports = ["Jasmine", "CB"] if skip_rosanna else ["Rosanna", "Jasmine", "CB"]
     if cathy_report:
         staff_reports.append("Cathy")
+    if custom_report_name:
+        staff_reports.append(custom_report_name)
 
     for staff_name in staff_reports:
         # Create new workbook
@@ -457,10 +217,12 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
             print(f"No rows for {staff_name}, skipping")
             continue
 
-        # Finalize for Rosanna, Jasmine, and Cathy only. Cathy's Status
-        # dropdown carries the same options as Jasmine's.
-        if staff_name in ["Rosanna", "Jasmine", "Cathy"]:
-            jasmine_options = staff_name in ("Jasmine", "Cathy")
+        # Finalize for Rosanna, Jasmine, Cathy, and a custom report's staff.
+        # Rosanna gets the plain dropdown; the rest share the wider one with
+        # Batch Billings and IOP included. CB is never in staff_reports'
+        # finalized set (it has no status dropdown).
+        if staff_name != "CB":
+            jasmine_options = staff_name != "Rosanna"
             finalize_workbook(new_wb, include_batch_billings=jasmine_options,
                               include_iop_status=jasmine_options)
 
@@ -472,7 +234,10 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
 def main(workbook_path, include_programming: bool = False, exclude_aetna: bool = False,
          cathy_report: bool = False, cathy_all_payers: bool = False,
          skip_rosanna: bool = False, exclude_payer_terms: list = None,
-         exclude_service_terms: list = None, exclude_scope: list = None):
+         exclude_service_terms: list = None, exclude_scope: list = None,
+         rosanna_cap_override: int = None, custom_report_name: str = None,
+         custom_report_payer_terms: list = None,
+         custom_report_professional_only: bool = True):
     """Main workflow.
 
     The optional flags mirror the checkboxes in the Streamlit app and
@@ -494,9 +259,19 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
           individual workbooks for this run only.
       exclude_scope       - staff names (--exclude-scope) the two custom
           exclusions apply to; empty/None applies them to everyone.
+      rosanna_cap_override - give Rosanna exactly this many professional-pool
+          rows for this run instead of the standard weekday schedule
+          (--rosanna-cap). Ignored if skip_rosanna is set.
+      custom_report_name/custom_report_payer_terms/
+          custom_report_professional_only - a second, generic Cathy-shaped
+          report (--custom-report-name/--custom-report-payers/
+          --custom-report-any-claim-type): matching rows go to a new named
+          staff member with their own workbook.
     """
     # "All of her payers" runs the Cathy report on its own.
     cathy_report = cathy_report or cathy_all_payers
+    if custom_report_name:
+        validate_custom_report_name(custom_report_name)
 
     # Load workbook
     wb = openpyxl.load_workbook(workbook_path)
@@ -517,7 +292,11 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
     # Step 2-6: Assign staff
     assign_staff(ws, date_token, include_programming=include_programming,
                  assign_cathy=cathy_report, cathy_all_payers=cathy_all_payers,
-                 skip_rosanna=skip_rosanna)
+                 skip_rosanna=skip_rosanna,
+                 rosanna_cap_override=rosanna_cap_override,
+                 custom_report_name=custom_report_name,
+                 custom_report_payer_terms=custom_report_payer_terms,
+                 custom_report_professional_only=custom_report_professional_only)
 
     # Step 7: Export individual workbooks (only if date_token is available)
     if date_token:
@@ -527,7 +306,8 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
                                skip_rosanna=skip_rosanna,
                                exclude_payer_terms=exclude_payer_terms,
                                exclude_service_terms=exclude_service_terms,
-                               exclude_scope=exclude_scope)
+                               exclude_scope=exclude_scope,
+                               custom_report_name=custom_report_name)
     else:
         print("Skipping individual workbook export due to missing date token")
 
@@ -580,6 +360,23 @@ if __name__ == "__main__":
                         help="Comma-separated staff names limiting --exclude-payers/"
                              "--exclude-services to those staff's workbooks. Leave "
                              "unset to apply them to every individual workbook.")
+    parser.add_argument("--rosanna-cap", type=int, default=None,
+                        help="Give Rosanna exactly this many professional-pool rows "
+                             "for this run instead of the standard weekday schedule. "
+                             "Ignored if --no-rosanna is also set.")
+    parser.add_argument("--custom-report-name", default=None,
+                        help="Staff name for a second, generic Cathy-shaped report: "
+                             "with --custom-report-payers, every Insurance row whose "
+                             "Payer matches goes to this staff member with their own "
+                             "workbook. Must not be Rosanna, Jasmine, CB, Melissa, "
+                             "Cathy, or Unable to Bill.")
+    parser.add_argument("--custom-report-payers", default="",
+                        help="Comma-separated payer terms (case-insensitive substring "
+                             "match) for --custom-report-name.")
+    parser.add_argument("--custom-report-any-claim-type", action="store_true",
+                        help="By default the custom report only claims Professional "
+                             "(CMS-1500/UB-04) rows, same as Cathy. Set this to match "
+                             "any claim type instead.")
     args = parser.parse_args()
 
     if args.workbook_path:
@@ -591,4 +388,8 @@ if __name__ == "__main__":
              skip_rosanna=args.skip_rosanna,
              exclude_payer_terms=parse_terms(args.exclude_payers),
              exclude_service_terms=parse_terms(args.exclude_services),
-             exclude_scope=parse_terms(args.exclude_scope))
+             exclude_scope=parse_terms(args.exclude_scope),
+             rosanna_cap_override=args.rosanna_cap,
+             custom_report_name=args.custom_report_name,
+             custom_report_payer_terms=parse_terms(args.custom_report_payers),
+             custom_report_professional_only=not args.custom_report_any_claim_type)
