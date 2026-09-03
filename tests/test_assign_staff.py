@@ -1,11 +1,12 @@
 """
 End-to-end tests for assign_staff: the Cathy report (both payer lists),
-the "give Rosanna nothing" option, and the include_programming override,
+the custom report (a second, generic Cathy-shaped slot), the Rosanna cap
+override, "give Rosanna nothing", and the include_programming override,
 exercised against a real worksheet.
 
-assign_staff lives in both app.py and "Unbilled Step 1.py". app.py imports
-Streamlit, so these tests load the standalone script instead — the two
-copies of the function are kept in sync.
+assign_staff lives in billing_rules.py; app.py and "Unbilled Step 1.py"
+both import it from there. app.py also imports Streamlit, so these tests
+load the standalone script instead, which re-exports the same function.
 
 Run: python tests/test_assign_staff.py
 Requires: openpyxl
@@ -362,6 +363,145 @@ def test_cathy_status_dropdown_matches_jasmine():
     # Jasmine's and Cathy's list: the same six plus Batch Billings and IOP.
     jasmine = _dropdown_options(include_batch_billings=True, include_iop_status=True)
     assert jasmine == base + ["Batch Billings", "IOP"]
+
+
+def test_rosanna_cap_override_replaces_standard_schedule():
+    """rosanna_cap_override replaces the weekday schedule with an exact count."""
+    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
+             "CMS-1500") for i in range(200)]
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, rosanna_cap_override=75)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+
+    assert assignments.count("Rosanna") == 75
+    assert assignments.count("Jasmine") == 125
+
+
+def test_rosanna_cap_override_can_open_a_weekend():
+    """The override also applies on a weekend, which otherwise caps Rosanna at 0."""
+    saturday = "09052026"  # a Saturday
+    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
+             "CMS-1500") for i in range(50)]
+
+    ws = _sheet(rows)
+    assign_staff(ws, saturday)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    assert "Rosanna" not in assignments
+
+    ws = _sheet(rows)
+    assign_staff(ws, saturday, rosanna_cap_override=20)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    assert assignments.count("Rosanna") == 20
+    assert assignments.count("Jasmine") == 30
+
+
+def test_rosanna_cap_override_ignored_when_skip_rosanna():
+    """skip_rosanna wins over rosanna_cap_override: Rosanna still gets nothing."""
+    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
+             "CMS-1500") for i in range(50)]
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, rosanna_cap_override=20, skip_rosanna=True)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+
+    assert "Rosanna" not in assignments
+    assert assignments.count("Jasmine") == 50
+
+
+def test_custom_report_routes_matching_professional_payer_rows():
+    """A custom report claims Professional rows for its payers, like a second Cathy."""
+    ws = _sheet(_cathy_candidate_rows())
+    assign_staff(ws, WEDNESDAY, custom_report_name="Karen",
+                 custom_report_payer_terms=["aetna"])
+    staff = _staff_by_client(ws)
+
+    assert staff["Evans, Eve"] == "Karen"  # Aetna, CMS-1500
+    # Optum wasn't in the custom report's payer list, so it stays Rosanna's.
+    assert staff["Frank, Fay"] == "Rosanna"
+    # Oxford isn't in this custom report's payer list ("aetna"), so this row
+    # is untouched by it either way; it's a non-Professional claim type
+    # outside the daily schedule, so it's Unable to Bill regardless.
+    assert staff["Diaz, Dee"] == "Unable to Bill"
+
+
+def test_custom_report_any_claim_type_when_professional_only_is_false():
+    """custom_report_professional_only=False matches any claim type, not just Professional."""
+    rows = [
+        ("Insurance", "Individual Therapy", "Cigna", "Adams, Ann", "CMS-1500"),
+        ("Insurance", "Individual Therapy", "Cigna", "Baker, Bob", "837I"),
+    ]
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, custom_report_name="Karen",
+                 custom_report_payer_terms=["cigna"],
+                 custom_report_professional_only=False)
+    staff = _staff_by_client(ws)
+
+    assert staff["Adams, Ann"] == "Karen"
+    assert staff["Baker, Bob"] == "Karen"
+
+
+def test_custom_report_leaves_pool_for_rosanna_and_jasmine():
+    """Custom report rows leave the professional pool entirely, same as Cathy's."""
+    rows = [("Insurance", "Individual Therapy", "Cigna", f"Karen{i:04d}", "CMS-1500")
+            for i in range(40)]
+    rows += [("Insurance", "Individual Therapy", "Optum", f"Pool{i:04d}", "CMS-1500")
+             for i in range(160)]
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, custom_report_name="Karen",
+                 custom_report_payer_terms=["cigna"])
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+
+    assert assignments.count("Karen") == 40
+    assert assignments.count("Rosanna") == 150
+    assert assignments.count("Jasmine") == 10
+
+
+def test_custom_report_and_cathy_do_not_double_claim():
+    """When both are on, Cathy is checked first; the custom report never re-claims her rows."""
+    rows = [
+        ("Insurance", "Individual Therapy", "Oxford", "Adams, Ann", "CMS-1500"),
+        ("Insurance", "Individual Therapy", "Cigna", "Baker, Bob", "CMS-1500"),
+    ]
+    ws = _sheet(rows)
+    # A custom report configured to also match Oxford: Cathy still gets it,
+    # because assign_cathy is checked first in assign_staff.
+    assign_staff(ws, WEDNESDAY, assign_cathy=True,
+                 custom_report_name="Karen",
+                 custom_report_payer_terms=["oxford", "cigna"])
+    staff = _staff_by_client(ws)
+
+    assert staff["Adams, Ann"] == "Cathy"
+    assert staff["Baker, Bob"] == "Karen"
+
+
+def test_custom_report_inactive_without_both_name_and_payers():
+    """Setting only the name or only the payer terms leaves the standard schedule in place."""
+    rows = [("Insurance", "Individual Therapy", "Cigna", "Adams, Ann", "CMS-1500")]
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, custom_report_name="Karen")
+    assert _staff_by_client(ws)["Adams, Ann"] == "Rosanna"
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, custom_report_payer_terms=["cigna"])
+    assert _staff_by_client(ws)["Adams, Ann"] == "Rosanna"
+
+
+def test_validate_custom_report_name_rejects_reserved_names():
+    """Reserved staff names (case-insensitive) are rejected for the custom report."""
+    for name in ("Rosanna", "jasmine", "CB", "Melissa", "cathy", "Unable to Bill"):
+        try:
+            unbilled.validate_custom_report_name(name)
+            assert False, f"expected ValueError for reserved name {name!r}"
+        except ValueError:
+            pass
+
+    # A non-reserved name, and no name at all, are both fine.
+    unbilled.validate_custom_report_name("Karen")
+    unbilled.validate_custom_report_name(None)
+    unbilled.validate_custom_report_name("")
 
 
 if __name__ == '__main__':

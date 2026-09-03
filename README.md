@@ -96,6 +96,31 @@ schedule above. The command-line script takes the same options as flags.
 Rows excluded by any of these options are still assigned in the Masters
 workbook — the option only controls what reaches the individual reports.
 
+### Custom exclusions (free text, no code change needed)
+
+Alongside the fixed checkboxes above, the app has two free-text fields for
+one-off exclusions that don't have a checkbox yet:
+
+- **Exclude payers containing** — a comma-separated list of terms
+  (case-insensitive substring match against the Payer column). Example:
+  `Cigna, Humana`.
+- **Exclude services containing** — the same, matched against the Service
+  column. Example: `Group Therapy`.
+- **Apply only to these staff** — an optional list limiting the two fields
+  above to specific staff workbooks (Rosanna, Jasmine, Cathy, CB). Leave it
+  empty to apply them to every individual workbook, the same way Exclude
+  Aetna does.
+
+These behave exactly like the checkboxes: matching rows are left out of the
+individual workbooks for that run only, and still appear in the Masters
+workbook. They exist so a payer or service that comes up once — "leave out
+Cigna today" — doesn't need a new checkbox, a code change, and a redeploy;
+type it into the box and process the file. A rule that turns out to be
+needed every time is still a good candidate to become a real checkbox later.
+
+The command-line script takes the same fields as flags: `--exclude-payers`,
+`--exclude-services`, and `--exclude-scope` (all comma-separated).
+
 Checking both "Include Programming (Detox/Residential) today" and "Don't give
 anyone Detox or Residential" is contradictory; the exclusion wins, and the app
 shows a warning saying so.
@@ -145,19 +170,57 @@ every row still appears in the Masters workbook with an owner, and the rules
 that never involved Rosanna (Self Pay to CB, Melissa's rows, Cathy's rows when
 her report is on) are untouched.
 
+### Overriding Rosanna's cap (optional, no code change needed)
+
+"Override Rosanna's cap for today" replaces the standard weekday schedule (150
+Monday-Friday, 0 on weekends) with an exact row count for this run only — for
+example, giving her 100 on a weekday she's out for part of, or opening up 20
+rows for her on a weekend. It's ignored if "Don't give Rosanna anything" is
+also checked (that option always wins). The command-line script takes the
+same option as `--rosanna-cap N`.
+
+### Custom report (optional, no code change needed)
+
+The "Custom report" fields are a second, generic version of the Cathy report
+above, for routing a specific payer's rows to a **different** staff member
+without a checkbox or a code change:
+
+- **Staff name for this report** — who the matching rows go to. Must not be
+  one of the reserved names (Rosanna, Jasmine, CB, Melissa, Cathy, Unable to
+  Bill); the app rejects the run with an error if it collides.
+- **Payers for this report** — comma-separated, case-insensitive substring
+  match against the Payer column, same matching as the custom exclusion
+  fields.
+- **Professional claim types only** — checked by default (the same
+  restriction Cathy has: only CMS-1500/UB-04 rows for these payers are
+  claimed). Uncheck to match any claim type.
+
+Like Cathy, this report's rows leave the Rosanna/Jasmine professional pool
+entirely (no row is worked twice), and it's checked *after* Cathy, so if a
+payer is on both lists, Cathy's rows stay hers. The rules that outrank Cathy
+(WM/OP WM, PHP, the O'Flynn Karen rule, Self Pay to CB) outrank this report
+too. Its workbook gets the same Status dropdown as Jasmine's and Cathy's
+(Batch Billings and IOP included). Both fields must be set for the report to
+run — a name with no payers, or payers with no name, do nothing.
+
+The command-line script takes the same options as `--custom-report-name`,
+`--custom-report-payers`, and `--custom-report-any-claim-type` (to turn off
+the Professional-only restriction).
+
 ## Reports
 
 Individual workbooks are generated for **Rosanna**, **Jasmine**, and **CB**
 (empty reports are skipped, e.g. Rosanna on weekends, and Rosanna's is not
-generated at all when "Don't give Rosanna anything" is on), plus **Cathy** when
-her report is turned on for the run. All other staff (Melissa, Unable to Bill,
+generated at all when "Don't give Rosanna anything" is on), plus **Cathy**
+when her report is turned on for the run, and the **custom report**'s staff
+member when that's configured. All other staff (Melissa, Unable to Bill,
 etc.) are still assigned in the Masters workbook but do not receive separate
 reports.
 
-Rosanna's, Jasmine's, and Cathy's reports include a Status column with a
-dropdown list: Billed, Unable to Bill, Contractual Adj, Incomplete Billings,
-Utox Batch, and Inclusive Services. Jasmine's and Cathy's reports share the
-same dropdown, which adds two more options: Batch Billings and IOP.
+Rosanna's report includes a Status column with a dropdown list: Billed,
+Unable to Bill, Contractual Adj, Incomplete Billings, Utox Batch, and
+Inclusive Services. Jasmine's, Cathy's, and the custom report's workbooks
+share the same dropdown, which adds two more options: Batch Billings and IOP.
 
 ### Fallback Behavior
 
@@ -221,11 +284,19 @@ pip install -r requirements.txt
 
 ## File Structure
 
-- `app.py` - Streamlit web application
-- `Unbilled Step 1.py` - Command-line processing script
-- `billing_rules.py` - Business logic for weekday-based non-billable determination
-- `tests/test_weekday_rules.py` - Unit tests for billing rules
-- `tests/test_assign_staff.py` - End-to-end tests for staff assignment
+- `app.py` - Streamlit web application (UI only; the assignment logic itself
+  lives in `billing_rules.py`)
+- `Unbilled Step 1.py` - Command-line processing script (same relationship
+  to `billing_rules.py` as app.py)
+- `billing_rules.py` - The shared assignment engine: `assign_staff`,
+  `finalize_workbook`, the weekday/payer/claim-type classifiers, and the
+  free-text exclusion/custom-report helpers. app.py and
+  `Unbilled Step 1.py` both import from here rather than keeping their own
+  copies, so a rule change can't happen in one and not the other.
+- `tests/test_weekday_rules.py` - Unit tests for the classifier helpers
+- `tests/test_assign_staff.py` - End-to-end tests for staff assignment,
+  loaded against `Unbilled Step 1.py` (which just re-exports
+  `billing_rules.assign_staff`)
 - `requirements.txt` - Python dependencies
 
 ## License

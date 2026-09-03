@@ -50,3 +50,4 @@ DPR Example.png
 .env
 *.env
 secrets.json
+.streamlit/secrets.toml
