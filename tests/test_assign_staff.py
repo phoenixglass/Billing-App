@@ -1,6 +1,7 @@
 """
-End-to-end tests for assign_staff: the Cathy report and the
-include_programming override, exercised against a real worksheet.
+End-to-end tests for assign_staff: the Cathy report (both payer lists),
+the "give Rosanna nothing" option, and the include_programming override,
+exercised against a real worksheet.
 
 assign_staff lives in both app.py and "Unbilled Step 1.py". app.py imports
 Streamlit, so these tests load the standalone script instead — the two
@@ -170,6 +171,114 @@ def test_cathy_takes_iop_for_her_payers():
     # Masters workbook names her as the owner too.
     assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
     assert assignments.count("Cathy") == 4
+
+
+def _cathy_all_payer_rows():
+    """Professional rows for the payers only Cathy's full list covers."""
+    return [
+        ("Insurance", "Individual Therapy", "Emblem (Optum)", "Gold, Gil", "CMS-1500"),
+        ("Insurance", "Individual Therapy", "Surest (Optum)", "Hall, Hana", "UB-04"),
+        ("Insurance", "Individual Therapy", "UMR (Optum)", "Ives, Ike", "CMS-1500"),
+        ("Insurance", "Individual Therapy", "UBH-HP (Optum)", "Jones, Jo", "CMS-1500"),
+    ]
+
+
+def test_cathy_all_payers_adds_the_rest_of_her_list():
+    """The full payer list gives Cathy Emblem, Surest, and UMR rows too."""
+    rows = _cathy_candidate_rows() + _cathy_all_payer_rows()
+
+    # Her usual three payers only: the added payers stay in the pool.
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, assign_cathy=True)
+    staff = _staff_by_client(ws)
+    assert staff["Gold, Gil"] == "Rosanna"
+    assert staff["Hall, Hana"] == "Rosanna"
+    assert staff["Ives, Ike"] == "Rosanna"
+    # UBH-HP matches the UBH pattern, so it is hers on either list.
+    assert staff["Jones, Jo"] == "Cathy"
+
+    # Full payer list: all four are hers, on top of her usual three.
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, assign_cathy=True, cathy_all_payers=True)
+    staff = _staff_by_client(ws)
+    for client in ("Gold, Gil", "Hall, Hana", "Ives, Ike", "Jones, Jo",
+                   "Adams, Ann", "Baker, Bob", "Carter, Cal"):
+        assert staff[client] == "Cathy", (client, staff[client])
+
+    # Still Professional-only, and still nothing outside her payer list.
+    assert staff["Diaz, Dee"] == "Unable to Bill"   # 837I Oxford
+    assert staff["Evans, Eve"] == "Rosanna"         # Aetna
+    assert staff["Frank, Fay"] == "Rosanna"         # plain Optum
+
+
+def test_cathy_all_payers_turns_the_report_on_by_itself():
+    """cathy_all_payers alone runs the Cathy report; assign_cathy is not needed."""
+    ws = _sheet(_cathy_candidate_rows() + _cathy_all_payer_rows())
+    assign_staff(ws, WEDNESDAY, cathy_all_payers=True)
+    staff = _staff_by_client(ws)
+
+    assert staff["Adams, Ann"] == "Cathy"
+    assert staff["Gold, Gil"] == "Cathy"
+
+
+def test_cathy_all_payers_rows_leave_the_professional_pool():
+    """Her wider payer list shrinks the pool Rosanna's cap is applied to."""
+    rows = [("Insurance", "Individual Therapy", "Emblem (Optum)", f"Cathy{i:04d}",
+             "CMS-1500") for i in range(40)]
+    rows += [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
+              "CMS-1500") for i in range(160)]
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, cathy_all_payers=True)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+
+    assert assignments.count("Cathy") == 40
+    # 160 rows are left in the pool: Rosanna's 150, then Jasmine's 10.
+    assert assignments.count("Rosanna") == 150
+    assert assignments.count("Jasmine") == 10
+    # 200 rows in, 200 rows out, each with exactly one owner.
+    assert len(assignments) == 200
+    assert all(value for value in assignments)
+
+
+def test_skip_rosanna_gives_the_whole_pool_to_jasmine():
+    """With skip_rosanna, Rosanna gets nothing and Jasmine takes the pool."""
+    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
+             "CMS-1500") for i in range(200)]
+    rows.append(("Self Pay", "Individual Therapy", "Self Pay", "Self, Sam", "CMS-1500"))
+
+    # Without the option, Wednesday's cap gives Rosanna her 150.
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    assert assignments.count("Rosanna") == 150
+    assert assignments.count("Jasmine") == 50
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, skip_rosanna=True)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+
+    assert "Rosanna" not in assignments
+    assert assignments.count("Jasmine") == 200
+    # Nothing is left unassigned, and Self Pay still goes to CB.
+    assert assignments.count("CB") == 1
+    assert len(assignments) == 201
+    assert all(value for value in assignments)
+
+
+def test_skip_rosanna_with_cathy_on_her_full_payer_list():
+    """The two options combine: Cathy takes her payers, Jasmine takes the rest."""
+    rows = _cathy_candidate_rows() + _cathy_all_payer_rows()
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, cathy_all_payers=True, skip_rosanna=True)
+    staff = _staff_by_client(ws)
+
+    assert "Rosanna" not in staff.values()
+    assert staff["Adams, Ann"] == "Cathy"
+    assert staff["Gold, Gil"] == "Cathy"
+    # Professional rows for payers neither option covers fall to Jasmine.
+    assert staff["Evans, Eve"] == "Jasmine"
+    assert staff["Frank, Fay"] == "Jasmine"
 
 
 def test_programming_included_on_a_wednesday():
