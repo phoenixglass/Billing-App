@@ -45,6 +45,8 @@ from billing_rules import (
     is_non_billable_service_for_weekday,
     is_php_service,
     is_professional_claim_type,
+    matches_any_term,
+    parse_terms,
     parse_weekday_from_token,
     ROSANNA_PROFESSIONAL_CAP,
 )
@@ -376,6 +378,27 @@ def test_include_programming_leaves_other_rules_alone():
             'Telemed IOP', weekday, include_programming=True)
 
 
+def test_parse_terms():
+    """parse_terms splits on commas, trims whitespace, and drops empties."""
+    assert parse_terms("Cigna, Humana") == ["Cigna", "Humana"]
+    assert parse_terms(" Cigna ,, Humana ") == ["Cigna", "Humana"]
+    assert parse_terms("") == []
+    assert parse_terms(None) == []
+    assert parse_terms("   ") == []
+
+
+def test_matches_any_term():
+    """matches_any_term is a case-insensitive substring match against any term."""
+    assert matches_any_term("Cigna Behavioral Health", ["cigna"])
+    assert matches_any_term("CIGNA", ["cigna", "humana"])
+    assert matches_any_term("Humana Gold", ["cigna", "humana"])
+    assert not matches_any_term("Aetna", ["cigna", "humana"])
+    assert not matches_any_term("Aetna", [])
+    assert not matches_any_term("Aetna", None)
+    assert not matches_any_term("", ["cigna"])
+    assert not matches_any_term(None, ["cigna"])
+
+
 if __name__ == '__main__':
     test_ecare_variants()
     print("✓ test_ecare_variants passed")
@@ -439,5 +462,11 @@ if __name__ == '__main__':
 
     test_include_programming_leaves_other_rules_alone()
     print("✓ test_include_programming_leaves_other_rules_alone passed")
+
+    test_parse_terms()
+    print("✓ test_parse_terms passed")
+
+    test_matches_any_term()
+    print("✓ test_matches_any_term passed")
 
     print("\nAll tests passed!")

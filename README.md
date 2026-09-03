@@ -96,6 +96,31 @@ schedule above. The command-line script takes the same options as flags.
 Rows excluded by any of these options are still assigned in the Masters
 workbook — the option only controls what reaches the individual reports.
 
+### Custom exclusions (free text, no code change needed)
+
+Alongside the fixed checkboxes above, the app has two free-text fields for
+one-off exclusions that don't have a checkbox yet:
+
+- **Exclude payers containing** — a comma-separated list of terms
+  (case-insensitive substring match against the Payer column). Example:
+  `Cigna, Humana`.
+- **Exclude services containing** — the same, matched against the Service
+  column. Example: `Group Therapy`.
+- **Apply only to these staff** — an optional list limiting the two fields
+  above to specific staff workbooks (Rosanna, Jasmine, Cathy, CB). Leave it
+  empty to apply them to every individual workbook, the same way Exclude
+  Aetna does.
+
+These behave exactly like the checkboxes: matching rows are left out of the
+individual workbooks for that run only, and still appear in the Masters
+workbook. They exist so a payer or service that comes up once — "leave out
+Cigna today" — doesn't need a new checkbox, a code change, and a redeploy;
+type it into the box and process the file. A rule that turns out to be
+needed every time is still a good candidate to become a real checkbox later.
+
+The command-line script takes the same fields as flags: `--exclude-payers`,
+`--exclude-services`, and `--exclude-scope` (all comma-separated).
+
 Checking both "Include Programming (Detox/Residential) today" and "Don't give
 anyone Detox or Residential" is contradictory; the exclusion wins, and the app
 shows a warning saying so.

@@ -183,6 +183,26 @@ def is_aetna_payer(payer: str) -> bool:
     return "aetna" in (payer or "").lower()
 
 
+def parse_terms(raw: str) -> list:
+    """Split a comma-separated string into trimmed, non-empty terms.
+
+    Used by the custom per-run payer/service exclusion fields, so an
+    operator can type "Cigna, Humana" into a text box instead of a new
+    checkbox needing a code change for each new payer or service.
+    """
+    if not raw:
+        return []
+    return [term.strip() for term in raw.split(",") if term.strip()]
+
+
+def matches_any_term(text: str, terms) -> bool:
+    """Return True if text contains any of terms, case-insensitively."""
+    if not terms:
+        return False
+    haystack = (text or "").lower()
+    return any(term.lower() in haystack for term in terms)
+
+
 def is_non_billable_service_for_weekday(
     service: str,
     weekday: int,

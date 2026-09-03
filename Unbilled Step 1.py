@@ -18,6 +18,8 @@ from billing_rules import (
     CATHY_PAYERS,
     CATHY_ALL_PAYERS,
     ROSANNA_PROFESSIONAL_CAP,
+    parse_terms,
+    matches_any_term,
 )
 
 stubs_required = False  # no Streamlit in the standalone script; keep for parity if needed
@@ -350,7 +352,10 @@ def finalize_workbook(wb, include_batch_billings: bool = False,
         ws.column_dimensions[get_column_letter(col)].auto_size = True
 
 def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
-                           cathy_report: bool = False, skip_rosanna: bool = False):
+                           cathy_report: bool = False, skip_rosanna: bool = False,
+                           exclude_payer_terms: list = None,
+                           exclude_service_terms: list = None,
+                           exclude_scope: list = None):
     """Export separate workbooks for Rosanna, Jasmine, and CB.
 
     All staff (Melissa, Unable to Bill, etc.) are still assigned in the
@@ -365,21 +370,31 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
             to her).
         skip_rosanna: When True, no workbook is exported for Rosanna — she
             was assigned nothing for this run.
+        exclude_payer_terms/exclude_service_terms: free-text custom
+            exclusions (--exclude-payers/--exclude-services). Any row whose
+            Payer or Service contains one of these terms (case-insensitive)
+            is left out of the individual workbooks for this run only.
+        exclude_scope: staff names (--exclude-scope) the two custom
+            exclusions apply to. Empty/None applies them to everyone, same
+            as exclude_aetna.
     """
 
     ws = wb.active
     save_folder = get_save_folder(wb_path, date_token)
 
-    # Find Program Level column for WM filtering, and Payer for the Aetna
-    # exclusion.
+    # Find Program Level column for WM filtering, Payer for the Aetna/custom
+    # exclusions, and Service for the custom service exclusion.
     program_level_col = None
     payer_col = None
+    service_col = None
     for col in range(1, ws.max_column + 1):
         header = ws.cell(1, col).value
         if header == "Program Level":
             program_level_col = col
         elif header == "Payer":
             payer_col = col
+        elif header == "Service":
+            service_col = col
 
     # Count and warn about WM rows
     wm_count = 0
@@ -418,6 +433,16 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
                 if exclude_aetna and payer_col is not None:
                     if is_aetna_payer(str(ws.cell(row, payer_col).value or "")):
                         continue
+                # Custom per-run exclusions (free text, no code change
+                # needed): skip if this staff is in scope (or scope is
+                # empty, meaning everyone) and the payer/service matches.
+                in_scope = not exclude_scope or staff_name in exclude_scope
+                if in_scope and exclude_payer_terms and payer_col is not None:
+                    if matches_any_term(str(ws.cell(row, payer_col).value or ""), exclude_payer_terms):
+                        continue
+                if in_scope and exclude_service_terms and service_col is not None:
+                    if matches_any_term(str(ws.cell(row, service_col).value or ""), exclude_service_terms):
+                        continue
                 # Skip WM program level rows for all staff except Melissa
                 # (Masters retains all rows; only Melissa bills WM)
                 if (staff_name != "Melissa" and
@@ -446,10 +471,11 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
 
 def main(workbook_path, include_programming: bool = False, exclude_aetna: bool = False,
          cathy_report: bool = False, cathy_all_payers: bool = False,
-         skip_rosanna: bool = False):
+         skip_rosanna: bool = False, exclude_payer_terms: list = None,
+         exclude_service_terms: list = None, exclude_scope: list = None):
     """Main workflow.
 
-    The five optional flags mirror the checkboxes in the Streamlit app and
+    The optional flags mirror the checkboxes in the Streamlit app and
     are all off by default, so a plain run follows the standard daily
     schedule:
       include_programming - bill Programming (Detox/Residential) regardless
@@ -462,6 +488,12 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
           by itself.
       skip_rosanna        - give Rosanna nothing: Jasmine takes the whole
           professional pool and no workbook is saved for Rosanna.
+      exclude_payer_terms/exclude_service_terms - free-text custom
+          exclusions (--exclude-payers/--exclude-services): rows whose
+          Payer/Service contains any of these terms are left out of the
+          individual workbooks for this run only.
+      exclude_scope       - staff names (--exclude-scope) the two custom
+          exclusions apply to; empty/None applies them to everyone.
     """
     # "All of her payers" runs the Cathy report on its own.
     cathy_report = cathy_report or cathy_all_payers
@@ -492,7 +524,10 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
         export_staff_workbooks(wb, workbook_path, date_token,
                                exclude_aetna=exclude_aetna,
                                cathy_report=cathy_report,
-                               skip_rosanna=skip_rosanna)
+                               skip_rosanna=skip_rosanna,
+                               exclude_payer_terms=exclude_payer_terms,
+                               exclude_service_terms=exclude_service_terms,
+                               exclude_scope=exclude_scope)
     else:
         print("Skipping individual workbook export due to missing date token")
 
@@ -531,6 +566,20 @@ if __name__ == "__main__":
                         help="Give Rosanna nothing for this run: Jasmine takes the "
                              "whole Professional pool and no workbook is saved for "
                              "Rosanna.")
+    parser.add_argument("--exclude-payers", default="",
+                        help="Comma-separated payer terms (case-insensitive substring "
+                             "match). Rows whose Payer contains any of these are left "
+                             "out of the individual workbooks for this run only. "
+                             "Example: --exclude-payers \"Cigna, Humana\"")
+    parser.add_argument("--exclude-services", default="",
+                        help="Comma-separated service terms (case-insensitive substring "
+                             "match). Rows whose Service contains any of these are left "
+                             "out of the individual workbooks for this run only. "
+                             "Example: --exclude-services \"Group Therapy\"")
+    parser.add_argument("--exclude-scope", default="",
+                        help="Comma-separated staff names limiting --exclude-payers/"
+                             "--exclude-services to those staff's workbooks. Leave "
+                             "unset to apply them to every individual workbook.")
     args = parser.parse_args()
 
     if args.workbook_path:
@@ -539,4 +588,7 @@ if __name__ == "__main__":
              exclude_aetna=args.exclude_aetna,
              cathy_report=args.cathy_report,
              cathy_all_payers=args.cathy_all_payers,
-             skip_rosanna=args.skip_rosanna)
+             skip_rosanna=args.skip_rosanna,
+             exclude_payer_terms=parse_terms(args.exclude_payers),
+             exclude_service_terms=parse_terms(args.exclude_services),
+             exclude_scope=parse_terms(args.exclude_scope))

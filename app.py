@@ -24,6 +24,8 @@ from billing_rules import (
     CATHY_PAYERS,
     CATHY_ALL_PAYERS,
     ROSANNA_PROFESSIONAL_CAP,
+    parse_terms,
+    matches_any_term,
 )
 
 # GCS logging is optional — the app falls back to local logging without it, so
@@ -572,13 +574,24 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                      exclude_aetna: bool = False,
                      cathy_report: bool = False,
                      cathy_all_payers: bool = False,
-                     skip_rosanna: bool = False):
+                     skip_rosanna: bool = False,
+                     exclude_payer_terms: list = None,
+                     exclude_service_terms: list = None,
+                     exclude_scope: list = None):
     """Process the uploaded workbook.
 
     The four exclude_* flags and include_programming/cathy_report/
     cathy_all_payers/skip_rosanna are all per-run options driven by the
     checkboxes below; every one of them is off by default, so an unchecked
     run follows the standard daily schedule.
+
+    exclude_payer_terms/exclude_service_terms are the free-text custom
+    exclusion fields: any row whose Payer or Service contains one of these
+    terms (case-insensitive) is left out of the individual workbooks for
+    this run, without needing a new checkbox or a code change. exclude_scope
+    limits which staff's workbooks the two custom exclusions apply to; an
+    empty/None scope applies them to every individual workbook, matching
+    how exclude_aetna and the other blanket exclusions behave.
     """
     # "Cathy report: all of her payers" runs her report by itself, so the
     # operator only has to check the one box.
@@ -677,6 +690,18 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                     if exclude_detox_residential and service_col is not None:
                         service_val = str(ws.cell(row, service_col).value or "").lower()
                         if "detox" in service_val or "residential" in service_val:
+                            continue
+                    # Custom per-run exclusions (free text, no code change
+                    # needed): skip if this staff is in scope (or scope is
+                    # empty, meaning everyone) and the payer/service matches.
+                    in_scope = not exclude_scope or assigned_staff in exclude_scope
+                    if in_scope and exclude_payer_terms and payer_col is not None:
+                        payer_val = str(ws.cell(row, payer_col).value or "")
+                        if matches_any_term(payer_val, exclude_payer_terms):
+                            continue
+                    if in_scope and exclude_service_terms and service_col is not None:
+                        service_val = str(ws.cell(row, service_col).value or "")
+                        if matches_any_term(service_val, exclude_service_terms):
                             continue
                     # Skip WM/OP WM program level rows for all staff except Melissa
                     if (staff_name != "Melissa" and
@@ -832,6 +857,38 @@ skip_rosanna = st.checkbox(
     )
 )
 
+st.markdown("**Custom exclusions for this run (type a payer or service — no code change needed)**")
+
+custom_exclude_payers_raw = st.text_input(
+    "Exclude payers containing (comma-separated, optional)",
+    value="",
+    help=(
+        "Rows whose Payer contains any of these terms (case-insensitive) are "
+        "left out of the individual workbooks for this run only. They still "
+        "appear in the Masters report. Example: Cigna, Humana"
+    ),
+)
+
+custom_exclude_services_raw = st.text_input(
+    "Exclude services containing (comma-separated, optional)",
+    value="",
+    help=(
+        "Rows whose Service contains any of these terms (case-insensitive) are "
+        "left out of the individual workbooks for this run only. They still "
+        "appear in the Masters report. Example: Group Therapy"
+    ),
+)
+
+custom_exclude_scope = st.multiselect(
+    "Apply the two custom exclusions above only to these staff (optional)",
+    options=["Rosanna", "Jasmine", "Cathy", "CB"],
+    default=[],
+    help="Leave empty to apply them to every individual workbook, same as Exclude Aetna above.",
+)
+
+custom_exclude_payer_terms = parse_terms(custom_exclude_payers_raw)
+custom_exclude_service_terms = parse_terms(custom_exclude_services_raw)
+
 if include_programming and exclude_detox_residential:
     st.warning(
         "⚠️ 'Include Programming (Detox/Residential) today' and \"Don't give anyone "
@@ -855,6 +912,9 @@ if uploaded_file is not None:
             cathy_report=cathy_report,
             cathy_all_payers=cathy_all_payers,
             skip_rosanna=skip_rosanna,
+            exclude_payer_terms=custom_exclude_payer_terms,
+            exclude_service_terms=custom_exclude_service_terms,
+            exclude_scope=custom_exclude_scope,
         )
 
         if wm_count > 0:
