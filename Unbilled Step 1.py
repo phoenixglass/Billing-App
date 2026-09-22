@@ -11,6 +11,7 @@ from billing_rules import (
     validate_custom_report_name,
     parse_terms,
     matches_any_term,
+    payer_excluded_by_division,
     assign_staff,
     finalize_workbook,
 )
@@ -106,25 +107,26 @@ def step_1_extract_invalid(ws):
     return len(invalid_rows)
 
 def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
-                           cathy_report: bool = False, skip_rosanna: bool = False,
+                           skip_cathy: bool = False,
                            exclude_payer_terms: list = None,
                            exclude_service_terms: list = None,
                            exclude_scope: list = None,
+                           division_exclude_payer_terms: list = None,
+                           division_exclude_division_terms: list = None,
                            custom_report_name: str = None):
-    """Export separate workbooks for Rosanna, Jasmine, and CB.
+    """Export separate workbooks for Cathy, Jasmine, and CB.
 
     All staff (Melissa, Unable to Bill, etc.) are still assigned in the
-    Masters workbook, but only Rosanna, Jasmine, and CB receive individual
-    reports.
+    Masters workbook, but only Cathy, Jasmine, and CB receive individual
+    reports. Cathy's workbook is always exported (like Jasmine/CB) unless
+    skip_cathy is set, since her carve-out and pool share both land in her
+    own "Cathy" assignment.
 
     Args:
         exclude_aetna: When True, Aetna rows are left out of every individual
             workbook. They still appear in the Masters workbook.
-        cathy_report: When True, also export Cathy's workbook (the
-            Professional-only rows for her payers that assign_staff routed
-            to her).
-        skip_rosanna: When True, no workbook is exported for Rosanna — she
-            was assigned nothing for this run.
+        skip_cathy: When True, no workbook is exported for Cathy — she was
+            assigned nothing at all for this run.
         exclude_payer_terms/exclude_service_terms: free-text custom
             exclusions (--exclude-payers/--exclude-services). Any row whose
             Payer or Service contains one of these terms (case-insensitive)
@@ -132,6 +134,12 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
         exclude_scope: staff names (--exclude-scope) the two custom
             exclusions apply to. Empty/None applies them to everyone, same
             as exclude_aetna.
+        division_exclude_payer_terms/division_exclude_division_terms:
+            free-text funding-source-by-division exclusion
+            (--exclude-payer-by-division-payers/--exclude-payer-by-division-divisions).
+            A row is left out of every individual workbook only when its
+            Payer matches one of division_exclude_payer_terms AND its
+            GROUPFLD1 matches one of division_exclude_division_terms.
         custom_report_name: when set, also export this staff member's
             workbook (the rows assign_staff routed to them via
             --custom-report-name/--custom-report-payers).
@@ -141,10 +149,12 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
     save_folder = get_save_folder(wb_path, date_token)
 
     # Find Program Level column for WM filtering, Payer for the Aetna/custom
-    # exclusions, and Service for the custom service exclusion.
+    # exclusions, Service for the custom service exclusion, and GROUPFLD1
+    # (division) for the funding-source-by-division exclusion.
     program_level_col = None
     payer_col = None
     service_col = None
+    division_col = None
     for col in range(1, ws.max_column + 1):
         header = ws.cell(1, col).value
         if header == "Program Level":
@@ -153,6 +163,8 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
             payer_col = col
         elif header == "Service":
             service_col = col
+        elif header == "GROUPFLD1":
+            division_col = col
 
     # Count and warn about WM rows
     wm_count = 0
@@ -167,9 +179,7 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
             "Only Melissa is authorized to bill WM."
         )
 
-    staff_reports = ["Jasmine", "CB"] if skip_rosanna else ["Rosanna", "Jasmine", "CB"]
-    if cathy_report:
-        staff_reports.append("Cathy")
+    staff_reports = ["Jasmine", "CB"] if skip_cathy else ["Cathy", "Jasmine", "CB"]
     if custom_report_name:
         staff_reports.append(custom_report_name)
 
@@ -192,6 +202,17 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
                 # still assigned in the Masters workbook.
                 if exclude_aetna and payer_col is not None:
                     if is_aetna_payer(str(ws.cell(row, payer_col).value or "")):
+                        continue
+                # Remove a funding source (Payer) by division (GROUPFLD1):
+                # only excluded when both a payer term and a division term
+                # are given and both match this row.
+                if (division_exclude_payer_terms and division_exclude_division_terms
+                        and payer_col is not None and division_col is not None):
+                    payer_val = str(ws.cell(row, payer_col).value or "")
+                    division_val = str(ws.cell(row, division_col).value or "")
+                    if payer_excluded_by_division(
+                            payer_val, division_val,
+                            division_exclude_payer_terms, division_exclude_division_terms):
                         continue
                 # Custom per-run exclusions (free text, no code change
                 # needed): skip if this staff is in scope (or scope is
@@ -217,14 +238,12 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
             print(f"No rows for {staff_name}, skipping")
             continue
 
-        # Finalize for Rosanna, Jasmine, Cathy, and a custom report's staff.
-        # Rosanna gets the plain dropdown; the rest share the wider one with
-        # Batch Billings and IOP included. CB is never in staff_reports'
-        # finalized set (it has no status dropdown).
+        # Finalize for Cathy, Jasmine, and a custom report's staff, all with
+        # the wider dropdown (Batch Billings and IOP included). CB is never
+        # in staff_reports' finalized set (it has no status dropdown).
         if staff_name != "CB":
-            jasmine_options = staff_name != "Rosanna"
-            finalize_workbook(new_wb, include_batch_billings=jasmine_options,
-                              include_iop_status=jasmine_options)
+            finalize_workbook(new_wb, include_batch_billings=True,
+                              include_iop_status=True)
 
         # Save
         save_path = save_folder / f"Unbilled Revenue By Resident and Funding Type {date_token} - {staff_name}.xlsx"
@@ -233,11 +252,14 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
 
 def main(workbook_path, include_programming: bool = False, exclude_aetna: bool = False,
          cathy_report: bool = False, cathy_all_payers: bool = False,
-         skip_rosanna: bool = False, exclude_payer_terms: list = None,
+         skip_cathy: bool = False, even_split_jasmine_cathy: bool = False,
+         exclude_payer_terms: list = None,
          exclude_service_terms: list = None, exclude_scope: list = None,
-         rosanna_cap_override: int = None, custom_report_name: str = None,
+         cathy_cap_override: int = None, custom_report_name: str = None,
          custom_report_payer_terms: list = None,
-         custom_report_professional_only: bool = True):
+         custom_report_professional_only: bool = True,
+         division_exclude_payer_terms: list = None,
+         division_exclude_division_terms: list = None):
     """Main workflow.
 
     The optional flags mirror the checkboxes in the Streamlit app and
@@ -247,26 +269,38 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
           of the weekday.
       exclude_aetna       - keep Aetna rows out of the individual workbooks.
       cathy_report        - route Professional Oxford/ConnectiCare/UBH rows
-          to Cathy and save her workbook.
-      cathy_all_payers    - run the Cathy report against her full payer list
-          (CATHY_ALL_PAYERS) instead of her usual three; turns the report on
-          by itself.
-      skip_rosanna        - give Rosanna nothing: Jasmine takes the whole
-          professional pool and no workbook is saved for Rosanna.
+          to Cathy on top of her standing share of the professional pool.
+      cathy_all_payers    - run that carve-out against her full payer list
+          (CATHY_ALL_PAYERS) instead of her usual three; turns the carve-out
+          on by itself.
+      skip_cathy          - give Cathy nothing at all: Jasmine takes the
+          whole professional pool and no workbook is saved for Cathy.
+      even_split_jasmine_cathy - instead of Cathy's cap and Jasmine taking
+          the remainder, split everything Jasmine would otherwise get
+          50/50 between Jasmine and Cathy for this run (IOP still always
+          goes to Jasmine). Ignored if skip_cathy is set.
       exclude_payer_terms/exclude_service_terms - free-text custom
           exclusions (--exclude-payers/--exclude-services): rows whose
           Payer/Service contains any of these terms are left out of the
           individual workbooks for this run only.
       exclude_scope       - staff names (--exclude-scope) the two custom
           exclusions apply to; empty/None applies them to everyone.
-      rosanna_cap_override - give Rosanna exactly this many professional-pool
+      cathy_cap_override  - give Cathy exactly this many professional-pool
           rows for this run instead of the standard weekday schedule
-          (--rosanna-cap). Ignored if skip_rosanna is set.
+          (--cathy-cap). Ignored if skip_cathy or even_split_jasmine_cathy
+          is set.
       custom_report_name/custom_report_payer_terms/
           custom_report_professional_only - a second, generic Cathy-shaped
           report (--custom-report-name/--custom-report-payers/
           --custom-report-any-claim-type): matching rows go to a new named
           staff member with their own workbook.
+      division_exclude_payer_terms/division_exclude_division_terms - remove
+          a funding source (Payer) by division (--exclude-payer-by-division-payers/
+          --exclude-payer-by-division-divisions), each a comma-separated
+          list so several funding sources and several divisions can be
+          combined in one run. A row is left out of every individual
+          workbook only when its Payer matches one of the payer terms AND
+          its GROUPFLD1 (division) matches one of the division terms.
     """
     # "All of her payers" runs the Cathy report on its own.
     cathy_report = cathy_report or cathy_all_payers
@@ -292,8 +326,9 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
     # Step 2-6: Assign staff
     assign_staff(ws, date_token, include_programming=include_programming,
                  assign_cathy=cathy_report, cathy_all_payers=cathy_all_payers,
-                 skip_rosanna=skip_rosanna,
-                 rosanna_cap_override=rosanna_cap_override,
+                 skip_cathy=skip_cathy,
+                 cathy_cap_override=cathy_cap_override,
+                 even_split_jasmine_cathy=even_split_jasmine_cathy,
                  custom_report_name=custom_report_name,
                  custom_report_payer_terms=custom_report_payer_terms,
                  custom_report_professional_only=custom_report_professional_only)
@@ -302,11 +337,12 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
     if date_token:
         export_staff_workbooks(wb, workbook_path, date_token,
                                exclude_aetna=exclude_aetna,
-                               cathy_report=cathy_report,
-                               skip_rosanna=skip_rosanna,
+                               skip_cathy=skip_cathy,
                                exclude_payer_terms=exclude_payer_terms,
                                exclude_service_terms=exclude_service_terms,
                                exclude_scope=exclude_scope,
+                               division_exclude_payer_terms=division_exclude_payer_terms,
+                               division_exclude_division_terms=division_exclude_division_terms,
                                custom_report_name=custom_report_name)
     else:
         print("Skipping individual workbook export due to missing date token")
@@ -342,10 +378,16 @@ if __name__ == "__main__":
                              + ", ".join(CATHY_ALL_PAYERS) + ") instead of just "
                              "her usual three. Turns the Cathy report on by "
                              "itself; --cathy-report is not also needed.")
-    parser.add_argument("--no-rosanna", action="store_true", dest="skip_rosanna",
-                        help="Give Rosanna nothing for this run: Jasmine takes the "
-                             "whole Professional pool and no workbook is saved for "
-                             "Rosanna.")
+    parser.add_argument("--no-cathy", action="store_true", dest="skip_cathy",
+                        help="Give Cathy nothing at all for this run: Jasmine takes "
+                             "the whole Professional pool and no workbook is saved "
+                             "for Cathy.")
+    parser.add_argument("--even-split-jasmine-cathy", action="store_true",
+                        help="Instead of Cathy's cap and Jasmine taking the "
+                             "remainder, split everything Jasmine would otherwise "
+                             "get 50/50 between Jasmine and Cathy for this run "
+                             "(IOP still always goes to Jasmine). Ignored if "
+                             "--no-cathy is also set.")
     parser.add_argument("--exclude-payers", default="",
                         help="Comma-separated payer terms (case-insensitive substring "
                              "match). Rows whose Payer contains any of these are left "
@@ -360,16 +402,17 @@ if __name__ == "__main__":
                         help="Comma-separated staff names limiting --exclude-payers/"
                              "--exclude-services to those staff's workbooks. Leave "
                              "unset to apply them to every individual workbook.")
-    parser.add_argument("--rosanna-cap", type=int, default=None,
-                        help="Give Rosanna exactly this many professional-pool rows "
+    parser.add_argument("--cathy-cap", type=int, default=None,
+                        help="Give Cathy exactly this many professional-pool rows "
                              "for this run instead of the standard weekday schedule. "
-                             "Ignored if --no-rosanna is also set.")
+                             "Ignored if --no-cathy or --even-split-jasmine-cathy is "
+                             "also set.")
     parser.add_argument("--custom-report-name", default=None,
                         help="Staff name for a second, generic Cathy-shaped report: "
                              "with --custom-report-payers, every Insurance row whose "
                              "Payer matches goes to this staff member with their own "
-                             "workbook. Must not be Rosanna, Jasmine, CB, Melissa, "
-                             "Cathy, or Unable to Bill.")
+                             "workbook. Must not be Jasmine, CB, Melissa, Cathy, or "
+                             "Unable to Bill.")
     parser.add_argument("--custom-report-payers", default="",
                         help="Comma-separated payer terms (case-insensitive substring "
                              "match) for --custom-report-name.")
@@ -377,6 +420,21 @@ if __name__ == "__main__":
                         help="By default the custom report only claims Professional "
                              "(CMS-1500/UB-04) rows, same as Cathy. Set this to match "
                              "any claim type instead.")
+    parser.add_argument("--exclude-payer-by-division-payers", default="",
+                        help="Comma-separated funding source (Payer) terms "
+                             "(case-insensitive substring match) to remove by "
+                             "division. Example: --exclude-payer-by-division-payers "
+                             "\"BCBS, Beacon\". Must be combined with "
+                             "--exclude-payer-by-division-divisions; both lists "
+                             "support multiple values, matched as any payer in any "
+                             "division.")
+    parser.add_argument("--exclude-payer-by-division-divisions", default="",
+                        help="Comma-separated division (GROUPFLD1) terms "
+                             "(case-insensitive substring match) the funding-source "
+                             "removal above applies to. Example: "
+                             "--exclude-payer-by-division-divisions \"Residential, "
+                             "Detox, OP Wilton, OP Canaan\". Rows matching neither "
+                             "list, or only one of the two lists, are not excluded.")
     args = parser.parse_args()
 
     if args.workbook_path:
@@ -385,11 +443,14 @@ if __name__ == "__main__":
              exclude_aetna=args.exclude_aetna,
              cathy_report=args.cathy_report,
              cathy_all_payers=args.cathy_all_payers,
-             skip_rosanna=args.skip_rosanna,
+             skip_cathy=args.skip_cathy,
+             even_split_jasmine_cathy=args.even_split_jasmine_cathy,
              exclude_payer_terms=parse_terms(args.exclude_payers),
              exclude_service_terms=parse_terms(args.exclude_services),
              exclude_scope=parse_terms(args.exclude_scope),
-             rosanna_cap_override=args.rosanna_cap,
+             cathy_cap_override=args.cathy_cap,
              custom_report_name=args.custom_report_name,
              custom_report_payer_terms=parse_terms(args.custom_report_payers),
-             custom_report_professional_only=not args.custom_report_any_claim_type)
+             custom_report_professional_only=not args.custom_report_any_claim_type,
+             division_exclude_payer_terms=parse_terms(args.exclude_payer_by_division_payers),
+             division_exclude_division_terms=parse_terms(args.exclude_payer_by_division_divisions))

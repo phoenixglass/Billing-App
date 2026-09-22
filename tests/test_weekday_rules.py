@@ -18,12 +18,13 @@ Optional per-run overrides (off by default):
 - The Cathy report claims Professional rows for Oxford, ConnectiCare, and
   UBH (see is_cathy_payer), or for her full payer list when the "all of her
   payers" variant is on (see is_cathy_all_payer).
-- Giving Rosanna nothing for a run drops her cap to zero, so Jasmine takes
+- Giving Cathy nothing for a run drops her cap to zero, so Jasmine takes
   the whole professional pool.
 - Excluding Aetna keys off is_aetna_payer.
 
-Rosanna/Jasmine split (Insurance rows only):
-- Rosanna's professional-service row cap by weekday: 150 rows Monday
+Cathy/Jasmine split (Insurance rows only). Cathy fills the role Rosanna
+used to hold, on top of her own payer-specific carve-out:
+- Cathy's professional-service row cap by weekday: 150 rows Monday
   through Friday.
 - Weekends have no cap for her (Jasmine gets the whole professional pool
   those days).
@@ -48,7 +49,8 @@ from billing_rules import (
     matches_any_term,
     parse_terms,
     parse_weekday_from_token,
-    ROSANNA_PROFESSIONAL_CAP,
+    payer_excluded_by_division,
+    CATHY_PROFESSIONAL_CAP,
 )
 
 
@@ -227,17 +229,39 @@ def test_self_pay_every_service_every_day_no_exceptions():
         assert not is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
 
 
-def test_rosanna_professional_cap_by_weekday():
-    """Rosanna's professional cap: 150 rows Monday through Friday."""
-    assert ROSANNA_PROFESSIONAL_CAP[0] == 150  # Monday
-    assert ROSANNA_PROFESSIONAL_CAP[1] == 150  # Tuesday
-    assert ROSANNA_PROFESSIONAL_CAP[2] == 150  # Wednesday
-    assert ROSANNA_PROFESSIONAL_CAP[3] == 150  # Thursday
-    assert ROSANNA_PROFESSIONAL_CAP[4] == 150  # Friday
+def test_cathy_professional_cap_by_weekday():
+    """Cathy's professional cap: 150 rows Monday through Friday."""
+    assert CATHY_PROFESSIONAL_CAP[0] == 150  # Monday
+    assert CATHY_PROFESSIONAL_CAP[1] == 150  # Tuesday
+    assert CATHY_PROFESSIONAL_CAP[2] == 150  # Wednesday
+    assert CATHY_PROFESSIONAL_CAP[3] == 150  # Thursday
+    assert CATHY_PROFESSIONAL_CAP[4] == 150  # Friday
 
     # Weekends are intentionally absent -> cap of 0.
-    assert ROSANNA_PROFESSIONAL_CAP.get(5, 0) == 0
-    assert ROSANNA_PROFESSIONAL_CAP.get(6, 0) == 0
+    assert CATHY_PROFESSIONAL_CAP.get(5, 0) == 0
+    assert CATHY_PROFESSIONAL_CAP.get(6, 0) == 0
+
+
+def test_payer_excluded_by_division():
+    """Funding-source-by-division exclusion: both lists must match, both must be non-empty."""
+    payer_terms = ["BCBS", "Beacon"]
+    division_terms = ["Residential", "Detox", "OP Wilton"]
+
+    # Payer and division both match (case-insensitive substring).
+    assert payer_excluded_by_division("BCBS of MA", "Residential", payer_terms, division_terms)
+    assert payer_excluded_by_division("beacon health", "OP Wilton Detox", payer_terms, division_terms)
+    # Multiple funding sources and multiple divisions combine as a cross
+    # product: any listed payer within any listed division is excluded.
+    assert payer_excluded_by_division("Beacon", "Detox", payer_terms, division_terms)
+
+    # Payer matches but division doesn't.
+    assert not payer_excluded_by_division("BCBS of MA", "OP Canaan", payer_terms, division_terms)
+    # Division matches but payer doesn't.
+    assert not payer_excluded_by_division("Aetna", "Residential", payer_terms, division_terms)
+    # Neither list given: never excludes anything.
+    assert not payer_excluded_by_division("BCBS", "Residential", [], division_terms)
+    assert not payer_excluded_by_division("BCBS", "Residential", payer_terms, [])
+    assert not payer_excluded_by_division("BCBS", "Residential", [], [])
 
 
 def test_parse_weekday_from_token():
@@ -439,8 +463,11 @@ if __name__ == '__main__':
     test_self_pay_every_service_every_day_no_exceptions()
     print("✓ test_self_pay_every_service_every_day_no_exceptions passed")
 
-    test_rosanna_professional_cap_by_weekday()
-    print("✓ test_rosanna_professional_cap_by_weekday passed")
+    test_cathy_professional_cap_by_weekday()
+    print("✓ test_cathy_professional_cap_by_weekday passed")
+
+    test_payer_excluded_by_division()
+    print("✓ test_payer_excluded_by_division passed")
 
     test_parse_weekday_from_token()
     print("✓ test_parse_weekday_from_token passed")

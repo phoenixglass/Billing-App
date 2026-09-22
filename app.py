@@ -20,6 +20,7 @@ from billing_rules import (
     validate_custom_report_name,
     parse_terms,
     matches_any_term,
+    payer_excluded_by_division,
     assign_staff,
     finalize_workbook,
 )
@@ -267,26 +268,29 @@ def secure_cleanup(file_path):
 
 def process_workbook(uploaded_file, exclude_optum: bool = False,
                      exclude_bcb_anthem_ct: bool = False,
-                     exclude_anthem_rosanna_jasmine_owm: bool = False,
+                     exclude_anthem_cathy_jasmine_owm: bool = False,
                      exclude_detox_residential: bool = False,
                      include_programming: bool = False,
                      exclude_aetna: bool = False,
                      cathy_report: bool = False,
                      cathy_all_payers: bool = False,
-                     skip_rosanna: bool = False,
+                     skip_cathy: bool = False,
+                     even_split_jasmine_cathy: bool = False,
                      exclude_payer_terms: list = None,
                      exclude_service_terms: list = None,
                      exclude_scope: list = None,
-                     rosanna_cap_override: int = None,
+                     cathy_cap_override: int = None,
                      custom_report_name: str = None,
                      custom_report_payer_terms: list = None,
-                     custom_report_professional_only: bool = True):
+                     custom_report_professional_only: bool = True,
+                     division_exclude_payer_terms: list = None,
+                     division_exclude_division_terms: list = None):
     """Process the uploaded workbook.
 
     The four exclude_* flags and include_programming/cathy_report/
-    cathy_all_payers/skip_rosanna are all per-run options driven by the
-    checkboxes below; every one of them is off by default, so an unchecked
-    run follows the standard daily schedule.
+    cathy_all_payers/skip_cathy/even_split_jasmine_cathy are all per-run
+    options driven by the checkboxes below; every one of them is off by
+    default, so an unchecked run follows the standard daily schedule.
 
     exclude_payer_terms/exclude_service_terms are the free-text custom
     exclusion fields: any row whose Payer or Service contains one of these
@@ -296,8 +300,18 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
     empty/None scope applies them to every individual workbook, matching
     how exclude_aetna and the other blanket exclusions behave.
 
-    rosanna_cap_override, when set, replaces the standard weekday cap with
-    this exact row count for the run (ignored if skip_rosanna is set).
+    cathy_cap_override, when set, replaces the standard weekday cap with
+    this exact row count for the run (ignored if skip_cathy is set, and
+    replaced by the 50/50 split if even_split_jasmine_cathy is set).
+
+    division_exclude_payer_terms/division_exclude_division_terms: a second
+    free-text exclusion, for dropping a funding source (Payer) only within
+    specific divisions (the GROUPFLD1 column, e.g. Residential, Detox, OP
+    Wilton, OP Canaan). A row is excluded from every individual workbook
+    only when its Payer matches one of division_exclude_payer_terms AND its
+    GROUPFLD1 matches one of division_exclude_division_terms; either list
+    empty means this exclusion does nothing. Rows stay in the Masters
+    report either way, matching every other exclusion here.
 
     custom_report_name/custom_report_payer_terms/
     custom_report_professional_only configure a second, generic Cathy-shaped
@@ -331,18 +345,21 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
         assign_staff(ws, date_token, include_programming=include_programming,
                      assign_cathy=cathy_report,
                      cathy_all_payers=cathy_all_payers,
-                     skip_rosanna=skip_rosanna,
-                     rosanna_cap_override=rosanna_cap_override,
+                     skip_cathy=skip_cathy,
+                     cathy_cap_override=cathy_cap_override,
+                     even_split_jasmine_cathy=even_split_jasmine_cathy,
                      custom_report_name=custom_report_name,
                      custom_report_payer_terms=custom_report_payer_terms,
                      custom_report_professional_only=custom_report_professional_only)
 
         output_files = {}
 
-        # Find the Service, Program Level, and Payer column indices
+        # Find the Service, Program Level, Payer, and GROUPFLD1 (division)
+        # column indices
         service_col = None
         program_level_col = None
         payer_col = None
+        division_col = None
         for col in range(1, ws.max_column + 1):
             header = ws.cell(1, col).value
             if header == "Service":
@@ -351,6 +368,8 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                 program_level_col = col
             elif header == "Payer":
                 payer_col = col
+            elif header == "GROUPFLD1":
+                division_col = col
 
         # Count WM rows for alerts (both WM and OP WM go to Melissa)
         wm_count = 0
@@ -360,14 +379,11 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                 if is_wm_program_level(pl):
                     wm_count += 1
 
-        # Rosanna, Jasmine, and CB always get individual reports (empty ones
-        # are skipped below); Cathy gets one only when her report is turned
-        # on for this run, the custom report's staff gets one only when it's
-        # configured, and Rosanna none at all when she is skipped. Melissa,
-        # Unable to Bill, etc. stay Masters-only.
-        staff_reports = ["Jasmine", "CB"] if skip_rosanna else ["Rosanna", "Jasmine", "CB"]
-        if cathy_report:
-            staff_reports.append("Cathy")
+        # Jasmine and CB always get individual reports (empty ones are
+        # skipped below); Cathy gets one unless she's skipped entirely for
+        # this run, and the custom report's staff gets one only when it's
+        # configured. Melissa, Unable to Bill, etc. stay Masters-only.
+        staff_reports = ["Jasmine", "CB"] if skip_cathy else ["Cathy", "Jasmine", "CB"]
         if custom_report_name:
             staff_reports.append(custom_report_name)
 
@@ -396,8 +412,8 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_bcb_anthem_ct_php_res_detox(payer_val, service_val):
                             continue
-                    if (exclude_anthem_rosanna_jasmine_owm and
-                            assigned_staff in ("Rosanna", "Jasmine") and
+                    if (exclude_anthem_cathy_jasmine_owm and
+                            assigned_staff in ("Cathy", "Jasmine") and
                             payer_col is not None):
                         payer_val = str(ws.cell(row, payer_col).value or "")
                         if is_anthem_payer(payer_val):
@@ -411,6 +427,17 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                     if exclude_detox_residential and service_col is not None:
                         service_val = str(ws.cell(row, service_col).value or "").lower()
                         if "detox" in service_val or "residential" in service_val:
+                            continue
+                    # Remove a funding source (Payer) by division (GROUPFLD1):
+                    # only excluded when both a payer term and a division
+                    # term are entered and both match this row.
+                    if (division_exclude_payer_terms and division_exclude_division_terms
+                            and payer_col is not None and division_col is not None):
+                        payer_val = str(ws.cell(row, payer_col).value or "")
+                        division_val = str(ws.cell(row, division_col).value or "")
+                        if payer_excluded_by_division(
+                                payer_val, division_val,
+                                division_exclude_payer_terms, division_exclude_division_terms):
                             continue
                     # Custom per-run exclusions (free text, no code change
                     # needed): skip if this staff is in scope (or scope is
@@ -439,12 +466,10 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
             if staff_name == "CB":
                 finalize_workbook(new_wb, skip_status_columns=True)
             else:
-                # Rosanna gets the plain dropdown; Jasmine, Cathy, and a
-                # custom report's staff all share the wider one with Batch
-                # Billings and IOP included.
-                jasmine_options = staff_name != "Rosanna"
-                finalize_workbook(new_wb, include_batch_billings=jasmine_options,
-                                  include_iop_status=jasmine_options)
+                # Jasmine, Cathy, and a custom report's staff all share the
+                # wider dropdown with Batch Billings and IOP included.
+                finalize_workbook(new_wb, include_batch_billings=True,
+                                  include_iop_status=True)
 
             output = io.BytesIO()
             new_wb.save(output)
@@ -484,7 +509,7 @@ if uploaded_file is not None:
 st.markdown(
     "Staff assignment now follows the standard daily schedule automatically, based on "
     "the date in the filename: Self Pay always bills every day to **CB**; for Insurance "
-    "rows, **Rosanna** gets the first 150 Professional (Claim Type CMS-1500 or UB-04) "
+    "rows, **Cathy** gets the first 150 Professional (Claim Type CMS-1500 or UB-04) "
     "services each weekday (Monday-Friday), sorted alphabetically by Client, and "
     "**Jasmine** gets the remaining Professional rows plus any billable Programming/e-care "
     "rows for that day. PHP rows always go to **Melissa** in the Masters report (no "
@@ -503,10 +528,10 @@ exclude_bcb_anthem_ct = st.checkbox(
     help="When checked, rows where the payer is BCB Anthem CT and the service is PHP (Partial Hospitalization), Residential, or Detox will be excluded from all individual staff workbooks."
 )
 
-exclude_anthem_rosanna_jasmine_owm = st.checkbox(
-    "Remove Anthem from Rosanna and Jasmine reports",
+exclude_anthem_cathy_jasmine_owm = st.checkbox(
+    "Remove Anthem from Cathy and Jasmine reports",
     value=False,
-    help="When checked, rows where the payer contains 'Anthem' will be excluded from Rosanna's and Jasmine's workbooks. Anthem rows are still retained in the Masters report."
+    help="When checked, rows where the payer contains 'Anthem' will be excluded from Cathy's and Jasmine's workbooks. Anthem rows are still retained in the Masters report."
 )
 
 exclude_detox_residential = st.checkbox(
@@ -538,66 +563,83 @@ exclude_aetna = st.checkbox(
 )
 
 cathy_report = st.checkbox(
-    "Cathy report: Professional services only for "
+    "Cathy carve-out: Professional services only for "
     + ", ".join(CATHY_PAYERS),
     value=False,
     help=(
         "When checked, Insurance rows whose Claim Type is Professional (CMS-1500 or "
         "UB-04) and whose payer is Oxford, ConnectiCare, or UBH are assigned to "
-        "Cathy and saved as her own workbook, whatever the service is — IOP for "
-        "those payers is hers too. Those rows leave the Rosanna/Jasmine "
-        "professional pool, so no row is worked twice — Rosanna's 150-row cap then "
-        "applies to what is left. WM, PHP, and the O'Flynn Karen rule still take "
-        "priority over Cathy."
+        "Cathy, whatever the service is — IOP for those payers is hers too. Those "
+        "rows leave the professional pool, so no row is worked twice — Cathy's "
+        "150-row cap (or the even split, if that's turned on) then applies to "
+        "what is left. WM, PHP, and the O'Flynn Karen rule still take priority "
+        "over Cathy. This is on top of, not instead of, Cathy's standing share of "
+        "the pool below."
     )
 )
 
 cathy_all_payers = st.checkbox(
-    "Cathy report: all of her payers ("
+    "Cathy carve-out: all of her payers ("
     + ", ".join(CATHY_ALL_PAYERS)
     + ")",
     value=False,
     help=(
-        "The same Cathy report, run against her full payer list instead of just "
+        "The same Cathy carve-out, run against her full payer list instead of just "
         "her usual three: it adds Emblem, Surest, UBH-HP, and UMR. Only the payer "
         "list widens — it is still Professional (CMS-1500/UB-04) Insurance rows "
-        "only, they still leave the Rosanna/Jasmine pool so no row is worked "
-        "twice, and WM, PHP, and the O'Flynn Karen rule still take priority. "
-        "Checking this runs the Cathy report on its own; the box above does not "
-        "also need to be checked."
+        "only, they still leave the pool so no row is worked twice, and WM, PHP, "
+        "and the O'Flynn Karen rule still take priority. Checking this runs the "
+        "carve-out on its own; the box above does not also need to be checked."
     )
 )
 
-skip_rosanna = st.checkbox(
-    "Don't give Rosanna anything",
+skip_cathy = st.checkbox(
+    "Don't give Cathy anything",
     value=False,
     help=(
-        "When checked, Rosanna is assigned no rows for this run and no workbook "
-        "is generated for her. Her share of the Professional pool goes to Jasmine "
+        "When checked, Cathy is assigned no rows at all for this run — neither her "
+        "payer carve-out above nor her share of the Professional pool — and no "
+        "workbook is generated for her. Her share of the pool goes to Jasmine "
         "instead, the same way it does on a weekend. Nothing is left unassigned: "
         "every row still appears in the Masters report with an owner."
     )
 )
 
-st.markdown("**Rosanna's cap for this run (optional, no code change needed)**")
-
-override_rosanna_cap = st.checkbox(
-    "Override Rosanna's cap for today",
+even_split_jasmine_cathy = st.checkbox(
+    "Split all services evenly between Jasmine and Cathy",
     value=False,
     help=(
-        "The standard schedule gives Rosanna the first 150 professional-pool rows "
+        "When checked, instead of Cathy's 150-row cap and Jasmine taking the "
+        "remainder, everything Jasmine would otherwise get is split 50/50 between "
+        "Jasmine and Cathy for this run: the rest of the Professional pool, plus "
+        "billable Programming/e-care, plus other billable non-Professional "
+        "Insurance rows. IOP still always goes to Jasmine. This replaces Cathy's "
+        "cap-based share and any cap override below for this run; her payer "
+        "carve-out above (if also checked) still claims its rows first. Ignored "
+        "if 'Don't give Cathy anything' is also checked."
+    )
+)
+
+st.markdown("**Cathy's cap for this run (optional, no code change needed)**")
+
+override_cathy_cap = st.checkbox(
+    "Override Cathy's cap for today",
+    value=False,
+    help=(
+        "The standard schedule gives Cathy the first 150 professional-pool rows "
         "Monday-Friday and none on weekends. Check this to give her a different "
-        "row count for this run only. Ignored if 'Don't give Rosanna anything' is checked."
+        "row count for this run only. Ignored if 'Don't give Cathy anything' or "
+        "'Split all services evenly between Jasmine and Cathy' is checked."
     ),
 )
-rosanna_cap_override = None
-if override_rosanna_cap:
-    rosanna_cap_override = int(st.number_input(
-        "Rosanna's row cap for this run",
+cathy_cap_override = None
+if override_cathy_cap:
+    cathy_cap_override = int(st.number_input(
+        "Cathy's row cap for this run",
         min_value=0,
         value=150,
         step=10,
-        help="Rosanna receives up to this many rows from the professional pool for this run.",
+        help="Cathy receives up to this many rows from the professional pool for this run.",
     ))
 
 st.markdown("**Custom report (optional, no code change needed) — route a payer to a new staff member**")
@@ -607,9 +649,9 @@ custom_report_name = st.text_input(
     value="",
     help=(
         "When set (with the payer list below), every Insurance row whose Payer "
-        "matches goes to this staff member instead of Rosanna/Jasmine, and they "
-        "get their own workbook for this run — the same way Cathy's report works, "
-        "for a different payer/staff combination. Must not be Rosanna, Jasmine, "
+        "matches goes to this staff member instead of Cathy/Jasmine, and they "
+        "get their own workbook for this run — the same way Cathy's carve-out "
+        "works, for a different payer/staff combination. Must not be Jasmine, "
         "CB, Melissa, Cathy, or Unable to Bill."
     ),
 )
@@ -659,13 +701,59 @@ custom_exclude_services_raw = st.text_input(
 
 custom_exclude_scope = st.multiselect(
     "Apply the two custom exclusions above only to these staff (optional)",
-    options=["Rosanna", "Jasmine", "Cathy", "CB"],
+    options=["Jasmine", "Cathy", "CB"],
     default=[],
     help="Leave empty to apply them to every individual workbook, same as Exclude Aetna above.",
 )
 
 custom_exclude_payer_terms = parse_terms(custom_exclude_payers_raw)
 custom_exclude_service_terms = parse_terms(custom_exclude_services_raw)
+
+st.markdown("**Remove a funding source by division (optional, no code change needed)**")
+st.caption(
+    "Enter one or more funding sources and one or more divisions — every "
+    "combination of the two is removed for this run."
+)
+
+division_exclude_payers_raw = st.text_input(
+    "Funding source(s) to remove — comma-separated, one or more (optional)",
+    value="",
+    help=(
+        "Case-insensitive substring match against the Payer column. "
+        "Enter as many as you need, comma-separated. Example: BCBS, Beacon"
+    ),
+)
+
+division_exclude_divisions_raw = st.text_input(
+    "Division(s) to remove it from — comma-separated, one or more (optional)",
+    value="",
+    help=(
+        "Case-insensitive substring match against the GROUPFLD1 (division) "
+        "column. Enter as many as you need, comma-separated. "
+        "Example: Residential, Detox, OP Wilton, OP Canaan"
+    ),
+)
+
+division_exclude_payer_terms = parse_terms(division_exclude_payers_raw)
+division_exclude_division_terms = parse_terms(division_exclude_divisions_raw)
+
+if division_exclude_payer_terms and not division_exclude_division_terms:
+    st.warning(
+        "⚠️ A funding source is set to be removed but no division was entered, "
+        "so this exclusion won't apply to anything."
+    )
+if division_exclude_division_terms and not division_exclude_payer_terms:
+    st.warning(
+        "⚠️ A division was entered but no funding source was given, so this "
+        "exclusion won't apply to anything."
+    )
+if division_exclude_payer_terms and division_exclude_division_terms:
+    st.caption(
+        "Rows whose Payer matches one of the funding source(s) above AND whose "
+        "GROUPFLD1 (division) matches one of the division(s) above are left out "
+        "of every individual workbook for this run. They still appear in the "
+        "Masters report."
+    )
 
 if include_programming and exclude_detox_residential:
     st.warning(
@@ -683,20 +771,23 @@ if uploaded_file is not None:
             uploaded_file,
             exclude_optum=exclude_optum,
             exclude_bcb_anthem_ct=exclude_bcb_anthem_ct,
-            exclude_anthem_rosanna_jasmine_owm=exclude_anthem_rosanna_jasmine_owm,
+            exclude_anthem_cathy_jasmine_owm=exclude_anthem_cathy_jasmine_owm,
             exclude_detox_residential=exclude_detox_residential,
             include_programming=include_programming,
             exclude_aetna=exclude_aetna,
             cathy_report=cathy_report,
             cathy_all_payers=cathy_all_payers,
-            skip_rosanna=skip_rosanna,
-            rosanna_cap_override=rosanna_cap_override,
+            skip_cathy=skip_cathy,
+            even_split_jasmine_cathy=even_split_jasmine_cathy,
+            cathy_cap_override=cathy_cap_override,
             custom_report_name=custom_report_name.strip() if custom_report_name else None,
             custom_report_payer_terms=custom_report_payer_terms,
             custom_report_professional_only=custom_report_professional_only,
             exclude_payer_terms=custom_exclude_payer_terms,
             exclude_service_terms=custom_exclude_service_terms,
             exclude_scope=custom_exclude_scope,
+            division_exclude_payer_terms=division_exclude_payer_terms,
+            division_exclude_division_terms=division_exclude_division_terms,
         )
 
         if wm_count > 0:
