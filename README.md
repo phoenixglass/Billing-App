@@ -97,7 +97,7 @@ schedule above. The command-line script takes the same options as flags.
 | Cathy carve-out: Professional services only for Oxford, ConnectiCare, UBH | `--cathy-report` | See the Cathy section below. |
 | Cathy carve-out: all of her payers (ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR) | `--cathy-all-payers` | The same carve-out run against her full payer list instead of just her usual three. Turns the carve-out on by itself — the box above does not also need to be checked. See the Cathy section below. |
 | Don't give Cathy anything | `--no-cathy` | Cathy is assigned no rows at all and gets no workbook — neither her carve-out nor her pool share; her share of the professional pool goes to Jasmine, the same way it does on a weekend. |
-| Split all services evenly between Jasmine and Cathy | `--even-split-jasmine-cathy` | Everything Jasmine would otherwise get (the rest of the pool, plus billable Programming/e-care, plus other billable institutional rows) is split 50/50 with Cathy instead. See "Splitting services evenly" below. |
+| Split all services evenly between Jasmine and Cathy | `--even-split-jasmine-cathy` | Everything Jasmine would otherwise get (the rest of the pool, plus billable Programming/e-care, plus other billable institutional rows, plus IOP) is split 50/50 with Cathy instead. See "Splitting services evenly" below. |
 
 Rows excluded by any of these options are still assigned in the Masters
 workbook — the option only controls what reaches the individual reports.
@@ -223,11 +223,10 @@ entirely for the run: instead of her taking a fixed row count and Jasmine
 the remainder, **everything Jasmine would otherwise receive** is divided
 50/50 between the two — the rest of the professional pool, plus billable
 Programming/e-care, plus other billable non-Professional (institutional)
-Insurance rows. IOP still always goes to Jasmine no matter what. Cathy's
-payer carve-out, if also turned on, still claims its rows first, ahead of
-the split. It's ignored if "Don't give Cathy anything" is also checked (she
-still gets nothing). The command-line script takes the same option as
-`--even-split-jasmine-cathy`.
+Insurance rows, plus IOP. Cathy's payer carve-out, if also turned on, still
+claims its rows first, ahead of the split. It's ignored if "Don't give
+Cathy anything" is also checked (she still gets nothing). The command-line
+script takes the same option as `--even-split-jasmine-cathy`.
 
 ### Custom report (optional, no code change needed)
 

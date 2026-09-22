@@ -613,10 +613,10 @@ even_split_jasmine_cathy = st.checkbox(
         "remainder, everything Jasmine would otherwise get is split 50/50 between "
         "Jasmine and Cathy for this run: the rest of the Professional pool, plus "
         "billable Programming/e-care, plus other billable non-Professional "
-        "Insurance rows. IOP still always goes to Jasmine. This replaces Cathy's "
-        "cap-based share and any cap override below for this run; her payer "
-        "carve-out above (if also checked) still claims its rows first. Ignored "
-        "if 'Don't give Cathy anything' is also checked."
+        "Insurance rows, plus IOP. This replaces Cathy's cap-based share and any "
+        "cap override below for this run; her payer carve-out above (if also "
+        "checked) still claims its rows first. Ignored if 'Don't give Cathy "
+        "anything' is also checked."
     )
 )
 

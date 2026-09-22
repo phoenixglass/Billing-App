@@ -421,12 +421,25 @@ def test_even_split_also_divides_jasmines_other_rows():
     assert len(assignments) == 20
 
 
-def test_even_split_leaves_iop_with_jasmine():
-    """IOP is never part of the even split — it always goes to Jasmine."""
+def test_even_split_includes_iop():
+    """Unlike the standard schedule, the even split divides IOP rows too."""
+    rows = [("Insurance", "Telemed IOP", "Magellan", f"Iop{i:04d}", "CMS-1500")
+            for i in range(20)]
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY, even_split_jasmine_cathy=True)
+    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+
+    assert assignments.count("Cathy") == 10
+    assert assignments.count("Jasmine") == 10
+
+
+def test_even_split_iop_still_goes_to_jasmine_without_the_option():
+    """Without even_split_jasmine_cathy, IOP is still always Jasmine's."""
     ws = _sheet([
         ("Insurance", "Telemed IOP", "Magellan", "Iop, Ida", "CMS-1500"),
     ])
-    assign_staff(ws, WEDNESDAY, even_split_jasmine_cathy=True)
+    assign_staff(ws, WEDNESDAY)
     assert _staff_by_client(ws)["Iop, Ida"] == "Jasmine"
 
 

@@ -277,8 +277,8 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
           whole professional pool and no workbook is saved for Cathy.
       even_split_jasmine_cathy - instead of Cathy's cap and Jasmine taking
           the remainder, split everything Jasmine would otherwise get
-          50/50 between Jasmine and Cathy for this run (IOP still always
-          goes to Jasmine). Ignored if skip_cathy is set.
+          50/50 between Jasmine and Cathy for this run, IOP included.
+          Ignored if skip_cathy is set.
       exclude_payer_terms/exclude_service_terms - free-text custom
           exclusions (--exclude-payers/--exclude-services): rows whose
           Payer/Service contains any of these terms are left out of the
@@ -385,9 +385,8 @@ if __name__ == "__main__":
     parser.add_argument("--even-split-jasmine-cathy", action="store_true",
                         help="Instead of Cathy's cap and Jasmine taking the "
                              "remainder, split everything Jasmine would otherwise "
-                             "get 50/50 between Jasmine and Cathy for this run "
-                             "(IOP still always goes to Jasmine). Ignored if "
-                             "--no-cathy is also set.")
+                             "get 50/50 between Jasmine and Cathy for this run, "
+                             "IOP included. Ignored if --no-cathy is also set.")
     parser.add_argument("--exclude-payers", default="",
                         help="Comma-separated payer terms (case-insensitive substring "
                              "match). Rows whose Payer contains any of these are left "

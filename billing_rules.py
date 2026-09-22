@@ -66,10 +66,10 @@ standard schedule unless the operator turns it on for that run):
 - even_split_jasmine_cathy: instead of Cathy's cap and Jasmine taking the
   remainder, split everything Jasmine would otherwise get — the rest of
   the professional pool, plus billable Programming/e-care, plus other
-  billable non-Professional Insurance rows — evenly between Jasmine and
-  Cathy for this run. IOP still always goes to Jasmine. This replaces
-  Cathy's cap-based share entirely for the run; her payer carve-out (if
-  also on) still claims its rows first, ahead of the split.
+  billable non-Professional Insurance rows, plus IOP — evenly between
+  Jasmine and Cathy for this run. This replaces Cathy's cap-based share
+  entirely for the run; her payer carve-out (if also on) still claims its
+  rows first, ahead of the split.
 - Exclude Aetna: drop Aetna rows (see is_aetna_payer) from the individual
   staff reports; they stay in the Masters workbook.
 """
@@ -340,8 +340,8 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       the remainder, split everything Jasmine would otherwise get evenly
       between Jasmine and Cathy for this run: the rest of the professional
       pool, plus billable Programming/e-care, plus other billable
-      non-Professional Insurance rows. IOP still always goes to Jasmine.
-      Cathy's payer carve-out (if also on) still claims its rows first.
+      non-Professional Insurance rows, plus IOP. Cathy's payer carve-out
+      (if also on) still claims its rows first, ahead of the split.
       Ignored (Cathy gets zero) when skip_cathy is also set.
     - custom_report_name/custom_report_payer_terms/
       custom_report_professional_only: a second, generic "Cathy slot" for
@@ -370,7 +370,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             for this run instead of the standard weekday schedule.
         even_split_jasmine_cathy: When True, split everything Jasmine would
             otherwise receive 50/50 with Cathy for this run instead of
-            using her cap, except IOP (always Jasmine's).
+            using her cap, IOP included.
         custom_report_name: When set (with custom_report_payer_terms), the
             staff name to assign matching rows to.
         custom_report_payer_terms: When set (with custom_report_name), payer
@@ -505,10 +505,16 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
         # the week, bypassing the professional pool/Cathy split even if
-        # Claim Type is CMS-1500 or UB-04.
+        # Claim Type is CMS-1500 or UB-04 — except under the even-split
+        # option, where it joins the shared pool like everything else
+        # Jasmine would otherwise get, so the two end up genuinely even.
         if is_iop_service(service):
-            fixed_staff[row] = "Jasmine"
-            other_rows.append(row)
+            if even_split_jasmine_cathy:
+                client = str(ws.cell(row, cols['client']).value or "").strip()
+                professional_rows.append((row, client))
+            else:
+                fixed_staff[row] = "Jasmine"
+                other_rows.append(row)
             continue
 
         if is_professional_claim_type(claim_type):
