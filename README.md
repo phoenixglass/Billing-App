@@ -18,24 +18,26 @@ the day's schedule automatically — there are no manual day-of-week toggles.
 **Self Pay**: every row with `GROUPFLD2` = "Self Pay" goes to **CB**. Every Self Pay
 service bills every day of the week, with no exceptions (including e-care).
 
-**Insurance** (`GROUPFLD2` = "Insurance") rows are split between **Rosanna** and
+**Insurance** (`GROUPFLD2` = "Insurance") rows are split between **Cathy** and
 **Jasmine**. `GROUPFLD2` values other than "Insurance" or "Self Pay" never
-reach Rosanna or Jasmine — they are marked Unable to Bill.
+reach Cathy or Jasmine — they are marked Unable to Bill. Cathy fills the role
+Rosanna used to hold, on top of her own payer-specific carve-out (see the
+Cathy section below) — the two stack and never double-assign the same row.
 
 - **Professional** services (identified by the `Claim Type` column equal to
   `CMS-1500` or `UB-04` — UB-04 counts as Professional every day) bill every
   day of the week. The Insurance + CMS-1500/UB-04 rows ("the professional
   pool") are sorted alphabetically by `Client`. Monday through Friday,
-  Rosanna receives the first 150 rows of that sorted pool; the rest of the
-  pool goes to Jasmine. Rosanna caps no rows on weekends, so Jasmine gets
+  Cathy receives the first 150 rows of that sorted pool; the rest of the
+  pool goes to Jasmine. Cathy caps no rows on weekends, so Jasmine gets
   the whole pool those days.
 - **Programming** services (Detox, Residential) bill Tuesday, Thursday,
   Friday, and weekends; they are Unable to Bill on Monday and Wednesday. All
   billable Programming rows go to Jasmine.
 - **IOP** (including Telemed IOP) bills every day of the week, with no
   exceptions, and always goes to Jasmine, bypassing the professional
-  pool/Rosanna split even if Claim Type is CMS-1500 or UB-04 — unless the
-  Cathy report is on and the row is a Professional row for one of her
+  pool/Cathy split even if Claim Type is CMS-1500 or UB-04 — unless her
+  payer carve-out is on and the row is a Professional row for one of her
   payers, which is hers (see below).
 - **E-care** bills on Tuesdays only (regardless of Claim Type). Billable e-care
   rows go to Jasmine.
@@ -43,29 +45,32 @@ reach Rosanna or Jasmine — they are marked Unable to Bill.
   (i.e. institutional/837I) goes to Jasmine, unless it's PHP (always Melissa's).
 - **PHP** (Partial Hospitalization) always goes to **Melissa**, every day — see
   the Melissa section below. It is not part of the Programming bucket above and
-  never reaches Rosanna or Jasmine.
+  never reaches Cathy or Jasmine.
 
-Rosanna's professional-pool cap by weekday:
+Cathy's professional-pool cap by weekday:
 
 | Day       | Capped staff | Cap      | Report                    |
 |-----------|--------------|----------|----------------------------|
-| Monday    | Rosanna      | 150      | 1 header + up to 150 rows |
-| Tuesday   | Rosanna      | 150      | 1 header + up to 150 rows |
-| Wednesday | Rosanna      | 150      | 1 header + up to 150 rows |
-| Thursday  | Rosanna      | 150      | 1 header + up to 150 rows |
-| Friday    | Rosanna      | 150      | 1 header + up to 150 rows |
+| Monday    | Cathy        | 150      | 1 header + up to 150 rows |
+| Tuesday   | Cathy        | 150      | 1 header + up to 150 rows |
+| Wednesday | Cathy        | 150      | 1 header + up to 150 rows |
+| Thursday  | Cathy        | 150      | 1 header + up to 150 rows |
+| Friday    | Cathy        | 150      | 1 header + up to 150 rows |
 | Sat/Sun   | —            | 0 (none) | Not generated              |
 
-Everything past Rosanna's share of the professional pool goes to Jasmine,
+Everything past Cathy's share of the professional pool goes to Jasmine,
 along with any billable Programming/e-care rows for that day. The per-run
-"Don't give Rosanna anything" option drops her cap to zero for every day, so
-Jasmine takes the whole pool.
+"Don't give Cathy anything" option drops her cap to zero for every day (and
+turns off her payer carve-out too), so Jasmine takes the whole pool. The
+per-run "Split all services evenly between Jasmine and Cathy" option divides
+everything Jasmine would otherwise get 50/50 with Cathy instead — see
+"Splitting services evenly" below.
 
 The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
 'extended care' (case-insensitive).
 
 **Melissa** and the O'Flynn Karen "Unable to Bill" rule take priority over the
-Rosanna/Jasmine schedule above:
+Cathy/Jasmine schedule above:
 - WM/OP WM Program Level rows always go to Melissa.
 - PHP/Partial Hospitalization rows always go to Melissa, every day. She does not
   get an individual report — PHP rows are assigned to her in the Masters
@@ -85,13 +90,14 @@ schedule above. The command-line script takes the same options as flags.
 |--------|------|--------|
 | Exclude Optum insurance | — | Optum utox (drug screen) rows are left out of the individual workbooks. |
 | Exclude BCB Anthem CT for PHP, Residential, and Detox | — | Those BCB Anthem CT rows are left out of the individual workbooks. |
-| Remove Anthem from Rosanna and Jasmine reports | — | Anthem rows are left out of Rosanna's and Jasmine's workbooks. |
+| Remove Anthem from Cathy and Jasmine reports | — | Anthem rows are left out of Cathy's and Jasmine's workbooks. |
 | Don't give anyone Detox or Residential | — | Detox/Residential rows are left out of every individual workbook. |
 | Include Programming (Detox/Residential) today | `--include-programming` | Programming bills regardless of the weekday, so it can be worked on a Monday or Wednesday. Billable Programming rows go to Jasmine as usual. E-care is unaffected and stays Tuesday-only. |
 | Exclude Aetna | `--exclude-aetna` | Every Aetna row is left out of the individual workbooks. |
-| Cathy report: Professional services only for Oxford, ConnectiCare, UBH | `--cathy-report` | See the Cathy section below. |
-| Cathy report: all of her payers (ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR) | `--cathy-all-payers` | The same Cathy report run against her full payer list instead of just her usual three. Turns the Cathy report on by itself — the box above does not also need to be checked. See the Cathy section below. |
-| Don't give Rosanna anything | `--no-rosanna` | Rosanna is assigned no rows and gets no workbook; her share of the professional pool goes to Jasmine, the same way it does on a weekend. |
+| Cathy carve-out: Professional services only for Oxford, ConnectiCare, UBH | `--cathy-report` | See the Cathy section below. |
+| Cathy carve-out: all of her payers (ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR) | `--cathy-all-payers` | The same carve-out run against her full payer list instead of just her usual three. Turns the carve-out on by itself — the box above does not also need to be checked. See the Cathy section below. |
+| Don't give Cathy anything | `--no-cathy` | Cathy is assigned no rows at all and gets no workbook — neither her carve-out nor her pool share; her share of the professional pool goes to Jasmine, the same way it does on a weekend. |
+| Split all services evenly between Jasmine and Cathy | `--even-split-jasmine-cathy` | Everything Jasmine would otherwise get (the rest of the pool, plus billable Programming/e-care, plus other billable institutional rows) is split 50/50 with Cathy instead. See "Splitting services evenly" below. |
 
 Rows excluded by any of these options are still assigned in the Masters
 workbook — the option only controls what reaches the individual reports.
@@ -107,7 +113,7 @@ one-off exclusions that don't have a checkbox yet:
 - **Exclude services containing** — the same, matched against the Service
   column. Example: `Group Therapy`.
 - **Apply only to these staff** — an optional list limiting the two fields
-  above to specific staff workbooks (Rosanna, Jasmine, Cathy, CB). Leave it
+  above to specific staff workbooks (Jasmine, Cathy, CB). Leave it
   empty to apply them to every individual workbook, the same way Exclude
   Aetna does.
 
@@ -125,29 +131,60 @@ Checking both "Include Programming (Detox/Residential) today" and "Don't give
 anyone Detox or Residential" is contradictory; the exclusion wins, and the app
 shows a warning saying so.
 
-### Cathy (optional report)
+### Removing a funding source by division (optional, no code change needed)
 
-When the Cathy report is turned on, **every** Insurance row whose `Claim Type`
-is Professional (`CMS-1500` or `UB-04`) **and** whose `Payer` is on her payer
-list is assigned to **Cathy** and saved as her own workbook. There are two
-payer lists to choose from:
+"Remove a funding source by division" excludes a payer, but only within
+specific divisions, instead of everywhere. Two comma-separated fields, both
+supporting **multiple values**:
+
+- **Funding source(s) to remove** — case-insensitive substring match against
+  the Payer column. Example: `BCBS, Beacon`.
+- **Division(s) to remove it from** — case-insensitive substring match
+  against the `GROUPFLD1` column (e.g. Residential, Detox, OP Wilton, OP
+  Canaan). Example: `Residential, Detox, OP Wilton, OP Canaan`.
+
+A row is excluded from every individual workbook only when its Payer matches
+**one of** the funding source(s) **and** its GROUPFLD1 matches **one of** the
+division(s) — every combination of the two lists is removed, so entering
+several funding sources and several divisions in the same run covers all of
+them together, not just one pair at a time. Leaving either field blank (or
+entering only one of the two) does nothing; the app warns if that happens.
+Rows still appear in the Masters workbook.
+
+The command-line script takes the same fields as
+`--exclude-payer-by-division-payers` and
+`--exclude-payer-by-division-divisions` (both comma-separated).
+
+### Cathy (payer carve-out and standing pool share)
+
+Cathy has two ways to receive rows, and they stack rather than replace one
+another:
+
+1. **Her standing share of the professional pool** — the role Rosanna used
+   to hold (see "Daily Billing Rules" above): up to 150 Professional rows a
+   weekday, sorted alphabetically, with the rest going to Jasmine.
+2. **Her payer carve-out (optional)** — when turned on, **every** Insurance
+   row whose `Claim Type` is Professional (`CMS-1500` or `UB-04`) **and**
+   whose `Payer` is on her payer list is assigned to her regardless of the
+   pool/cap, and leaves the pool entirely so it's never worked twice. There
+   are two payer lists to choose from:
 
 | Option | Payers |
 |--------|--------|
-| Cathy report: Professional services only for Oxford, ConnectiCare, UBH | Oxford, ConnectiCare, UBH (UBH-HP included — it matches the UBH pattern) |
-| Cathy report: all of her payers | The three above plus Emblem, Surest, UMR — i.e. ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR |
+| Cathy carve-out: Professional services only for Oxford, ConnectiCare, UBH | Oxford, ConnectiCare, UBH (UBH-HP included — it matches the UBH pattern) |
+| Cathy carve-out: all of her payers | The three above plus Emblem, Surest, UMR — i.e. ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR |
 
 The wider list changes **only** which payers are hers; everything else about
-the report is the same, and checking it runs the Cathy report on its own
+the carve-out is the same, and checking it runs the carve-out on its own
 whether or not the narrower box is also checked.
 
 - The service does not matter, only the claim type and the payer. IOP for
-  her payers is hers too: she takes it ahead of the IOP-to-Jasmine
+  her carve-out payers is hers too: she takes it ahead of the IOP-to-Jasmine
   rule. IOP for any other payer, or IOP that is not a Professional claim
   type, is still Jasmine's.
-- Those rows leave the Rosanna/Jasmine professional pool rather than being
-  duplicated into it, so no row is worked twice. Rosanna's 150-row cap then
-  applies to whatever is left of the pool.
+- Carve-out rows leave the Cathy/Jasmine professional pool rather than being
+  duplicated into it, so no row is worked twice. Her 150-row cap (or the
+  even split, if that's on) then applies to whatever is left of the pool.
 - Payer matching is case-insensitive and tolerates the spelling variants these
   payers appear with: `ConnectiCare`/`Connecti Care`, `UBH`/`United
   Behavioral Health`, and the `(Optum)` suffixes (`Emblem (Optum)`,
@@ -160,33 +197,46 @@ whether or not the narrower box is also checked.
 - Her workbook gets Status/Comments columns whose dropdown carries the same
   options as Jasmine's, Batch Billings and IOP included.
 
-### Giving Rosanna nothing (optional)
+### Giving Cathy nothing (optional)
 
-When "Don't give Rosanna anything" is turned on, Rosanna is assigned no rows
-for that run and no workbook is generated for her. Her share of the
-professional pool goes to **Jasmine** instead — the same thing that already
-happens on a weekend, when Rosanna's cap is zero. Nothing is left unassigned:
-every row still appears in the Masters workbook with an owner, and the rules
-that never involved Rosanna (Self Pay to CB, Melissa's rows, Cathy's rows when
-her report is on) are untouched.
+When "Don't give Cathy anything" is turned on, Cathy is assigned no rows at
+all for that run — neither her payer carve-out nor her share of the
+professional pool — and no workbook is generated for her. Her share of the
+pool goes to **Jasmine** instead — the same thing that already happens on a
+weekend, when her cap is zero. Nothing is left unassigned: every row still
+appears in the Masters workbook with an owner, and the rules that never
+involved Cathy (Self Pay to CB, Melissa's rows) are untouched.
 
-### Overriding Rosanna's cap (optional, no code change needed)
+### Overriding Cathy's cap (optional, no code change needed)
 
-"Override Rosanna's cap for today" replaces the standard weekday schedule (150
+"Override Cathy's cap for today" replaces the standard weekday schedule (150
 Monday-Friday, 0 on weekends) with an exact row count for this run only — for
 example, giving her 100 on a weekday she's out for part of, or opening up 20
-rows for her on a weekend. It's ignored if "Don't give Rosanna anything" is
-also checked (that option always wins). The command-line script takes the
-same option as `--rosanna-cap N`.
+rows for her on a weekend. It's ignored if "Don't give Cathy anything" or
+"Split all services evenly between Jasmine and Cathy" is also checked. The
+command-line script takes the same option as `--cathy-cap N`.
+
+### Splitting services evenly (optional)
+
+"Split all services evenly between Jasmine and Cathy" replaces Cathy's cap
+entirely for the run: instead of her taking a fixed row count and Jasmine
+the remainder, **everything Jasmine would otherwise receive** is divided
+50/50 between the two — the rest of the professional pool, plus billable
+Programming/e-care, plus other billable non-Professional (institutional)
+Insurance rows. IOP still always goes to Jasmine no matter what. Cathy's
+payer carve-out, if also turned on, still claims its rows first, ahead of
+the split. It's ignored if "Don't give Cathy anything" is also checked (she
+still gets nothing). The command-line script takes the same option as
+`--even-split-jasmine-cathy`.
 
 ### Custom report (optional, no code change needed)
 
-The "Custom report" fields are a second, generic version of the Cathy report
+The "Custom report" fields are a second, generic version of Cathy's carve-out
 above, for routing a specific payer's rows to a **different** staff member
 without a checkbox or a code change:
 
 - **Staff name for this report** — who the matching rows go to. Must not be
-  one of the reserved names (Rosanna, Jasmine, CB, Melissa, Cathy, Unable to
+  one of the reserved names (Jasmine, CB, Melissa, Cathy, Unable to
   Bill); the app rejects the run with an error if it collides.
 - **Payers for this report** — comma-separated, case-insensitive substring
   match against the Payer column, same matching as the custom exclusion
@@ -195,13 +245,14 @@ without a checkbox or a code change:
   restriction Cathy has: only CMS-1500/UB-04 rows for these payers are
   claimed). Uncheck to match any claim type.
 
-Like Cathy, this report's rows leave the Rosanna/Jasmine professional pool
-entirely (no row is worked twice), and it's checked *after* Cathy, so if a
-payer is on both lists, Cathy's rows stay hers. The rules that outrank Cathy
-(WM/OP WM, PHP, the O'Flynn Karen rule, Self Pay to CB) outrank this report
-too. Its workbook gets the same Status dropdown as Jasmine's and Cathy's
-(Batch Billings and IOP included). Both fields must be set for the report to
-run — a name with no payers, or payers with no name, do nothing.
+Like Cathy's carve-out, this report's rows leave the Cathy/Jasmine
+professional pool entirely (no row is worked twice), and it's checked *after*
+Cathy's carve-out, so if a payer is on both lists, Cathy's rows stay hers.
+The rules that outrank Cathy (WM/OP WM, PHP, the O'Flynn Karen rule, Self Pay
+to CB) outrank this report too. Its workbook gets the same Status dropdown as
+Jasmine's and Cathy's (Batch Billings and IOP included). Both fields must be
+set for the report to run — a name with no payers, or payers with no name,
+do nothing.
 
 The command-line script takes the same options as `--custom-report-name`,
 `--custom-report-payers`, and `--custom-report-any-claim-type` (to turn off
@@ -209,18 +260,16 @@ the Professional-only restriction).
 
 ## Reports
 
-Individual workbooks are generated for **Rosanna**, **Jasmine**, and **CB**
-(empty reports are skipped, e.g. Rosanna on weekends, and Rosanna's is not
-generated at all when "Don't give Rosanna anything" is on), plus **Cathy**
-when her report is turned on for the run, and the **custom report**'s staff
-member when that's configured. All other staff (Melissa, Unable to Bill,
-etc.) are still assigned in the Masters workbook but do not receive separate
-reports.
+Individual workbooks are generated for **Cathy**, **Jasmine**, and **CB**
+(empty reports are skipped, e.g. Cathy on weekends, and Cathy's is not
+generated at all when "Don't give Cathy anything" is on), plus the
+**custom report**'s staff member when that's configured. All other staff
+(Melissa, Unable to Bill, etc.) are still assigned in the Masters workbook
+but do not receive separate reports.
 
-Rosanna's report includes a Status column with a dropdown list: Billed,
-Unable to Bill, Contractual Adj, Incomplete Billings, Utox Batch, and
-Inclusive Services. Jasmine's, Cathy's, and the custom report's workbooks
-share the same dropdown, which adds two more options: Batch Billings and IOP.
+Jasmine's, Cathy's, and the custom report's workbooks share a Status column
+with a dropdown list: Billed, Unable to Bill, Contractual Adj, Incomplete
+Billings, Utox Batch, Inclusive Services, Batch Billings, and IOP.
 
 ### Fallback Behavior
 
@@ -250,8 +299,14 @@ Add any of the per-run flags as needed, for example:
 ```bash
 python "Unbilled Step 1.py" "path/to/file.xlsx" --include-programming --exclude-aetna --cathy-report
 
-# Cathy's full payer list, and nothing for Rosanna:
-python "Unbilled Step 1.py" "path/to/file.xlsx" --cathy-all-payers --no-rosanna
+# Cathy's full payer list, and nothing for Cathy otherwise:
+python "Unbilled Step 1.py" "path/to/file.xlsx" --cathy-all-payers --no-cathy
+
+# Split everything else 50/50 between Jasmine and Cathy, and remove BCBS/Beacon
+# from the Residential and Detox divisions:
+python "Unbilled Step 1.py" "path/to/file.xlsx" --even-split-jasmine-cathy \
+    --exclude-payer-by-division-payers "BCBS, Beacon" \
+    --exclude-payer-by-division-divisions "Residential, Detox"
 ```
 
 ## Testing

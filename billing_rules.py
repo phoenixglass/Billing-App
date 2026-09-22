@@ -21,23 +21,25 @@ Daily billing schedule:
   only on Tuesdays as a real-world/manual matter, not something this
   module's weekday helpers gate.
 
-Rosanna/Jasmine split (applies to GROUPFLD2 == "Insurance" rows only; no
+Cathy/Jasmine split (applies to GROUPFLD2 == "Insurance" rows only; no
 Self Pay ever goes to either of them, and PHP rows never reach them since
-PHP always goes to Melissa):
+PHP always goes to Melissa). Cathy fills the role Rosanna used to hold
+(Rosanna is gone), on top of her own payer-specific carve-out described
+below — the two stack and never double-assign the same row:
 - The "professional pool" is every Insurance row whose Claim Type is
   CMS-1500 or UB-04, sorted alphabetically by Client. Monday through
-  Friday, Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday]
+  Friday, Cathy receives the first CATHY_PROFESSIONAL_CAP[weekday]
   rows (150) of that sorted pool; anything past her share of the pool
-  goes to Jasmine. Rosanna caps no rows on weekends, so the entire pool
+  goes to Jasmine. Cathy caps no rows on weekends, so the entire pool
   goes to Jasmine those days.
 - Jasmine also receives every billable Programming/e-care row, plus any
   other billable Insurance row whose Claim Type is not CMS-1500/UB-04
   (i.e. institutional/837I), unless it's PHP (always Melissa's).
 - IOP (including Telemed IOP) always goes to Jasmine, every day of the
-  week, bypassing the professional pool/Rosanna split entirely, even if
+  week, bypassing the professional pool/Cathy split entirely, even if
   Claim Type is CMS-1500 or UB-04.
 - GROUPFLD2 values other than "Insurance" or "Self Pay" never reach
-  Rosanna or Jasmine.
+  Cathy or Jasmine.
 
 Optional, per-run overrides (all off by default; nothing below changes the
 standard schedule unless the operator turns it on for that run):
@@ -49,15 +51,25 @@ standard schedule unless the operator turns it on for that run):
   the professional pool and assign it to Cathy instead, so a row is never
   worked twice. Whatever the service is, it is hers — including IOP for
   those three payers, which she takes ahead of the IOP-to-Jasmine rule.
-  WM, PHP and the O'Flynn Karen rule still take priority over it.
+  WM, PHP and the O'Flynn Karen rule still take priority over it. This is
+  on top of, not instead of, Cathy's standing share of the professional
+  pool above.
 - Cathy report, all of her payers: the same report run against Cathy's
   full payer list (see is_cathy_all_payer / CATHY_ALL_PAYERS) instead of
   just her usual three. Only the payer list widens; it is still
   Professional Insurance rows only, and it turns the Cathy report on by
   itself.
-- Nothing for Rosanna: give Rosanna no rows at all for the run. Her share
-  of the professional pool goes to Jasmine instead, exactly as it does on
-  a weekend, and no workbook is generated for her.
+- Nothing for Cathy: give Cathy no rows at all for the run — neither her
+  payer carve-out nor her share of the professional pool. Her share of
+  the pool goes to Jasmine instead, exactly as it does on a weekend, and
+  no workbook is generated for her.
+- even_split_jasmine_cathy: instead of Cathy's cap and Jasmine taking the
+  remainder, split everything Jasmine would otherwise get — the rest of
+  the professional pool, plus billable Programming/e-care, plus other
+  billable non-Professional Insurance rows — evenly between Jasmine and
+  Cathy for this run. IOP still always goes to Jasmine. This replaces
+  Cathy's cap-based share entirely for the run; her payer carve-out (if
+  also on) still claims its rows first, ahead of the split.
 - Exclude Aetna: drop Aetna rows (see is_aetna_payer) from the individual
   staff reports; they stay in the Masters workbook.
 """
@@ -73,10 +85,12 @@ from openpyxl.worksheet.datavalidation import DataValidation
 DRUG_SCREEN_KEYWORDS = ("drug screen", "utox", "urine tox", "drug test", "uds")
 PHP_KEYWORDS = ("partial hospitalization", "php")
 
-# Rosanna's professional-service row cap by weekday (0=Monday..6=Sunday).
-# Rosanna works Monday through Friday, capped at 150 rows/day; she receives
-# no rows on weekends.
-ROSANNA_PROFESSIONAL_CAP = {0: 150, 1: 150, 2: 150, 3: 150, 4: 150}
+# Cathy's professional-service row cap by weekday (0=Monday..6=Sunday), for
+# her standing share of the pool (the role Rosanna used to hold). Cathy
+# works Monday through Friday, capped at 150 rows/day; she receives no rows
+# on weekends this way. This is separate from her payer-specific carve-out
+# below, which is not capped.
+CATHY_PROFESSIONAL_CAP = {0: 150, 1: 150, 2: 150, 3: 150, 4: 150}
 
 # Payers that go to Cathy's Professional-services-only report when that
 # optional report is turned on. Matching is case-insensitive and tolerant of
@@ -207,6 +221,22 @@ def matches_any_term(text: str, terms) -> bool:
     return any(term.lower() in haystack for term in terms)
 
 
+def payer_excluded_by_division(payer: str, division: str, payer_terms, division_terms) -> bool:
+    """Return True if payer matches payer_terms AND division matches division_terms.
+
+    Used by the optional "remove a funding source by division" exclusion:
+    an operator names a payer (e.g. BCBS, Beacon) and a division (the
+    GROUPFLD1 column, e.g. Residential, Detox, OP Wilton, OP Canaan), and
+    only rows matching both are excluded. Both term lists must be
+    non-empty, or this never matches — entering only one field does
+    nothing, since a payer alone or a division alone isn't the feature
+    being asked for.
+    """
+    if not payer_terms or not division_terms:
+        return False
+    return matches_any_term(payer, payer_terms) and matches_any_term(division, division_terms)
+
+
 def is_wm_program_level(cell_value) -> bool:
     """Return True if the Program Level cell contains 'WM' (covers OP WM too)."""
     return "WM" in str(cell_value or "").upper()
@@ -227,7 +257,7 @@ def is_bcb_anthem_ct_php_res_detox(payer: str, service: str) -> bool:
 # report's name (see assign_staff's custom_report_name) must not collide
 # with one of these, or its rows would be indistinguishable from that
 # staff's own.
-RESERVED_STAFF_NAMES = ("Rosanna", "Jasmine", "CB", "Melissa", "Cathy", "Unable to Bill")
+RESERVED_STAFF_NAMES = ("Jasmine", "CB", "Melissa", "Cathy", "Unable to Bill")
 
 
 def validate_custom_report_name(name: str) -> None:
@@ -242,7 +272,8 @@ def validate_custom_report_name(name: str) -> None:
 
 def assign_staff(ws, date_token: str = None, include_programming: bool = False,
                  assign_cathy: bool = False, cathy_all_payers: bool = False,
-                 skip_rosanna: bool = False, rosanna_cap_override: int = None,
+                 skip_cathy: bool = False, cathy_cap_override: int = None,
+                 even_split_jasmine_cathy: bool = False,
                  custom_report_name: str = None, custom_report_payer_terms: list = None,
                  custom_report_professional_only: bool = True):
     """Assign staff names based on the standard daily billing rules.
@@ -254,21 +285,21 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
     - Self Pay (GROUPFLD2 == "Self Pay") always goes to CB; every service
       bills every day, with no exceptions.
-    - Jasmine and Rosanna only ever receive GROUPFLD2 == "Insurance" rows.
+    - Jasmine and Cathy only ever receive GROUPFLD2 == "Insurance" rows.
     - Among Insurance rows, the "professional pool" is every row whose
       Claim Type is CMS-1500 or UB-04 (UB-04 counts as Professional every
       day), sorted alphabetically by Client. Monday through Friday,
-      Rosanna receives the first ROSANNA_PROFESSIONAL_CAP[weekday] (150)
-      of that sorted pool; the rest of the pool goes to Jasmine. Rosanna
+      Cathy receives the first CATHY_PROFESSIONAL_CAP[weekday] (150)
+      of that sorted pool; the rest of the pool goes to Jasmine. Cathy
       caps no rows on weekends, so Jasmine gets the whole pool those days.
     - Jasmine also receives Insurance rows that are billable Programming
       (Detox, Residential) or e-care for that weekday, as well as any
       other billable Insurance row whose Claim Type is not CMS-1500/UB-04
       (i.e. institutional/837I), unless it's PHP (always Melissa's).
     - IOP (including Telemed IOP) always goes to Jasmine, every day of the
-      week, bypassing the professional pool/Rosanna split even if Claim
-      Type is CMS-1500 or UB-04 — unless the Cathy report or a custom
-      report claims the row first (see below).
+      week, bypassing the professional pool/Cathy split even if Claim
+      Type is CMS-1500 or UB-04 — unless Cathy's payer carve-out or a
+      custom report claims the row first (see below).
     - Any other Insurance row (not billable that day), or any row that is
       neither Self Pay nor Insurance, is Unable to Bill.
     - Melissa (WM/OP WM Program Level, PHP/Partial Hospitalization, or
@@ -285,23 +316,33 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       Wednesday. E-care is unaffected and stays Tuesday-only.
     - assign_cathy: every Professional (CMS-1500/UB-04) Insurance row whose
       Payer is Oxford, ConnectiCare, or UBH goes to Cathy instead of into
-      the Rosanna/Jasmine professional pool, so no row is worked twice.
+      the Cathy/Jasmine professional pool, so no row is worked twice.
       Whatever the service is, it is hers: that includes IOP for those
       three payers, which she takes ahead of the IOP-to-Jasmine rule. The
       rules ahead of her (Self Pay, WM, O'Flynn Karen, Aetna/Humana
-      Detox/Residential, and PHP) still take priority.
+      Detox/Residential, and PHP) still take priority. This is on top of,
+      not instead of, Cathy's standing cap-based share of the pool below.
     - cathy_all_payers: run that same Cathy rule against her full payer
       list (CATHY_ALL_PAYERS) instead of just her usual three — adding
       Emblem, Surest, UBH-HP and UMR. Only the payer list widens: it is
       still Professional Insurance rows only, and the same rules still
       take priority over her. This turns the Cathy report on by itself,
       whether or not assign_cathy is also set.
-    - skip_rosanna: Rosanna is given no rows at all. The whole professional
-      pool left after Cathy's/the custom report's goes to Jasmine, exactly
-      as it does on a weekend.
-    - rosanna_cap_override: give Rosanna exactly this many professional-pool
+    - skip_cathy: Cathy is given no rows at all — neither her payer
+      carve-out (assign_cathy/cathy_all_payers are forced off) nor her cap
+      share of the professional pool. The whole pool goes to Jasmine,
+      exactly as it does on a weekend.
+    - cathy_cap_override: give Cathy exactly this many professional-pool
       rows for this run instead of the standard weekday schedule. Ignored
-      (Rosanna gets zero) when skip_rosanna is also set.
+      (Cathy gets zero) when skip_cathy is set, and ignored (replaced by
+      the 50/50 split) when even_split_jasmine_cathy is set.
+    - even_split_jasmine_cathy: instead of Cathy's cap and Jasmine taking
+      the remainder, split everything Jasmine would otherwise get evenly
+      between Jasmine and Cathy for this run: the rest of the professional
+      pool, plus billable Programming/e-care, plus other billable
+      non-Professional Insurance rows. IOP still always goes to Jasmine.
+      Cathy's payer carve-out (if also on) still claims its rows first.
+      Ignored (Cathy gets zero) when skip_cathy is also set.
     - custom_report_name/custom_report_payer_terms/
       custom_report_professional_only: a second, generic "Cathy slot" for
       routing a specific payer's rows to a different named staff member
@@ -323,10 +364,13 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             Insurance rows to Cathy.
         cathy_all_payers: When True, give Cathy her full payer list instead
             of her usual three, and turn her report on by itself.
-        skip_rosanna: When True, assign Rosanna nothing; Jasmine takes the
-            whole professional pool.
-        rosanna_cap_override: When set, use this row count as Rosanna's cap
+        skip_cathy: When True, assign Cathy nothing at all; Jasmine takes
+            the whole professional pool.
+        cathy_cap_override: When set, use this row count as Cathy's cap
             for this run instead of the standard weekday schedule.
+        even_split_jasmine_cathy: When True, split everything Jasmine would
+            otherwise receive 50/50 with Cathy for this run instead of
+            using her cap, except IOP (always Jasmine's).
         custom_report_name: When set (with custom_report_payer_terms), the
             staff name to assign matching rows to.
         custom_report_payer_terms: When set (with custom_report_name), payer
@@ -372,23 +416,13 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     # "All of her payers" implies the Cathy report: checking that option
     # alone is enough to run it.
     assign_cathy = assign_cathy or cathy_all_payers
+    # skip_cathy means Cathy gets nothing at all this run, including her
+    # payer carve-out.
+    if skip_cathy:
+        assign_cathy = False
     is_cathy_row_payer = is_cathy_all_payer if cathy_all_payers else is_cathy_payer
 
     custom_report_active = bool(custom_report_name and custom_report_payer_terms)
-
-    # Rosanna takes nothing when skip_rosanna is on, so the whole pool falls
-    # to Jasmine — the same path a weekend already takes. Otherwise, an
-    # explicit per-run override wins over the standard weekday schedule.
-    if skip_rosanna:
-        rosanna_cap = 0
-    elif rosanna_cap_override is not None:
-        rosanna_cap = max(0, rosanna_cap_override)
-    else:
-        rosanna_cap = ROSANNA_PROFESSIONAL_CAP.get(weekday, 0)
-    if rosanna_cap:
-        capped_staff, professional_cap = "Rosanna", rosanna_cap
-    else:
-        capped_staff, professional_cap = None, 0
 
     row_data_map = {}
     fixed_staff = {}        # original_row -> staff already decided
@@ -441,7 +475,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
-        # Jasmine and Rosanna only ever receive Insurance rows.
+        # Jasmine and Cathy only ever receive Insurance rows.
         if group != "Insurance":
             fixed_staff[row] = "Unable to Bill"
             other_rows.append(row)
@@ -449,7 +483,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
         # Cathy (optional): every Professional row for her payers is hers,
         # whatever the service is. That includes IOP, so this sits ahead of
-        # the IOP-to-Jasmine rule below. Her rows leave the Rosanna/Jasmine
+        # the IOP-to-Jasmine rule below. Her rows leave the Cathy/Jasmine
         # professional pool entirely rather than being worked twice.
         if (assign_cathy and is_professional_claim_type(claim_type)
                 and is_cathy_row_payer(payer)):
@@ -470,7 +504,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             continue
 
         # IOP (including Telemed IOP) always goes to Jasmine, every day of
-        # the week, bypassing the professional pool/Rosanna split even if
+        # the week, bypassing the professional pool/Cathy split even if
         # Claim Type is CMS-1500 or UB-04.
         if is_iop_service(service):
             fixed_staff[row] = "Jasmine"
@@ -485,14 +519,42 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
         if is_non_billable_service_for_weekday(
                 service, weekday, include_programming=include_programming):
             fixed_staff[row] = "Unable to Bill"
+            other_rows.append(row)
+            continue
+
+        # Billable Programming/e-care/institutional Insurance row that
+        # would normally go straight to Jasmine. Under the even-split
+        # option it joins the same pool as the professional rows so it can
+        # be divided with Cathy too; otherwise it's Jasmine's as usual.
+        if even_split_jasmine_cathy:
+            client = str(ws.cell(row, cols['client']).value or "").strip()
+            professional_rows.append((row, client))
         else:
             fixed_staff[row] = "Jasmine"
-        other_rows.append(row)
+            other_rows.append(row)
 
-    # Move the professional (Insurance + CMS-1500/UB-04) pool to the top of
-    # the sheet, sorted alphabetically by Client; every other row keeps its
-    # original relative order after that.
+    # Move the professional pool (Insurance + CMS-1500/UB-04, plus — under
+    # even_split_jasmine_cathy — the rest of Jasmine's usual rows) to the
+    # top of the sheet, sorted alphabetically by Client; every other row
+    # keeps its original relative order after that.
     professional_rows.sort(key=lambda x: x[1].lower())
+
+    # Cathy takes nothing when skip_cathy is on, so the whole pool falls to
+    # Jasmine — the same path a weekend already takes. An even split (once
+    # the pool is known) replaces her cap; otherwise an explicit per-run
+    # override wins over the standard weekday schedule.
+    if skip_cathy:
+        cathy_cap = 0
+    elif even_split_jasmine_cathy:
+        cathy_cap = len(professional_rows) // 2
+    elif cathy_cap_override is not None:
+        cathy_cap = max(0, cathy_cap_override)
+    else:
+        cathy_cap = CATHY_PROFESSIONAL_CAP.get(weekday, 0)
+    if cathy_cap:
+        capped_staff, professional_cap = "Cathy", cathy_cap
+    else:
+        capped_staff, professional_cap = None, 0
 
     ordered_rows = [row for row, _ in professional_rows] + other_rows
     new_row_pos = 2
@@ -515,7 +577,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
 def finalize_workbook(wb, include_batch_billings: bool = False, include_iop_status: bool = False,
                       skip_status_columns: bool = False):
-    """Add Status/Comments columns and validation for Rosanna/Jasmine/Cathy/custom exports.
+    """Add Status/Comments columns and validation for Jasmine/Cathy/custom exports.
 
     Args:
         wb: Workbook to finalize.
