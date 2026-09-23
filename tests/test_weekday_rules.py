@@ -15,19 +15,12 @@ Daily billing schedule:
 
 Optional per-run overrides (off by default):
 - include_programming makes Programming billable on any weekday.
-- The Cathy report claims Professional rows for Oxford, ConnectiCare, and
-  UBH (see is_cathy_payer), or for her full payer list when the "all of her
-  payers" variant is on (see is_cathy_all_payer).
-- Giving Cathy nothing for a run drops her cap to zero, so Jasmine takes
-  the whole professional pool.
+- Giving Cathy nothing for a run gives Jasmine the whole shared pool.
 - Excluding Aetna keys off is_aetna_payer.
 
-Cathy/Jasmine split (Insurance rows only). Cathy fills the role Rosanna
-used to hold, on top of her own payer-specific carve-out:
-- Cathy's professional-service row cap by weekday: 150 rows Monday
-  through Friday.
-- Weekends have no cap for her (Jasmine gets the whole professional pool
-  those days).
+Cathy/Jasmine split (Insurance rows only): everything either would get is
+split exactly in half every day, alternating Day A (Jasmine A-M, Cathy
+N-Z) and Day B (the reverse) by calendar day — see split_day_for_date_token.
 """
 import sys
 from pathlib import Path
@@ -40,8 +33,6 @@ from billing_rules import (
     _is_ecare,
     _is_programming_service,
     is_aetna_payer,
-    is_cathy_payer,
-    is_cathy_all_payer,
     is_iop_service,
     is_non_billable_service_for_weekday,
     is_php_service,
@@ -50,7 +41,9 @@ from billing_rules import (
     parse_terms,
     parse_weekday_from_token,
     payer_excluded_by_division,
-    CATHY_PROFESSIONAL_CAP,
+    split_day_for_date_token,
+    SPLIT_DAY_A_ANCHOR,
+    ReportExclusions,
 )
 
 
@@ -229,17 +222,31 @@ def test_self_pay_every_service_every_day_no_exceptions():
         assert not is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
 
 
-def test_cathy_professional_cap_by_weekday():
-    """Cathy's professional cap: 150 rows Monday through Friday."""
-    assert CATHY_PROFESSIONAL_CAP[0] == 150  # Monday
-    assert CATHY_PROFESSIONAL_CAP[1] == 150  # Tuesday
-    assert CATHY_PROFESSIONAL_CAP[2] == 150  # Wednesday
-    assert CATHY_PROFESSIONAL_CAP[3] == 150  # Thursday
-    assert CATHY_PROFESSIONAL_CAP[4] == 150  # Friday
+def test_split_day_alternates_every_calendar_day():
+    """09/23/2026 is Day A; every calendar day after it flips, weekends included."""
+    assert SPLIT_DAY_A_ANCHOR.strftime("%m%d%Y") == "09232026"
+    expected = {
+        "09222026": "B",  # Tuesday
+        "09232026": "A",  # Wednesday (the anchor)
+        "09242026": "B",  # Thursday
+        "09252026": "A",  # Friday
+        "09262026": "B",  # Saturday
+        "09272026": "A",  # Sunday
+        "09282026": "B",  # Monday
+        "12312026": "B",  # across a month and year boundary...
+        "01012027": "A",  # ...still alternates
+    }
+    for token, day in expected.items():
+        assert split_day_for_date_token(token) == (day, False), token
 
-    # Weekends are intentionally absent -> cap of 0.
-    assert CATHY_PROFESSIONAL_CAP.get(5, 0) == 0
-    assert CATHY_PROFESSIONAL_CAP.get(6, 0) == 0
+
+def test_split_day_falls_back_to_today_for_a_bad_token():
+    day, did_fallback = split_day_for_date_token("notadate")
+    assert day in ("A", "B")
+    assert did_fallback is True
+    day, did_fallback = split_day_for_date_token(None)
+    assert day in ("A", "B")
+    assert did_fallback is True
 
 
 def test_payer_excluded_by_division():
@@ -299,66 +306,40 @@ def test_case_insensitive_matching():
     assert not is_non_billable_service_for_weekday('IOP', weekday)
 
 
-def test_cathy_payer_variants():
-    """Oxford, ConnectiCare, and UBH are recognized; other payers are not."""
-    assert is_cathy_payer('Oxford')
-    assert is_cathy_payer('OXFORD HEALTH PLANS')
-    assert is_cathy_payer('oxford')
+def test_report_exclusions():
+    """ReportExclusions matches the per-report filters the app and CLI used
+    to apply inline."""
+    none = ReportExclusions()
+    assert not none.excludes("Jasmine", "Aetna", "Detox Admission", "Residential")
 
-    assert is_cathy_payer('ConnectiCare')
-    assert is_cathy_payer('Connecticare')
-    assert is_cathy_payer('Connecti Care')
-    assert is_cathy_payer('Connecti-Care')
-    assert is_cathy_payer('CONNECTICARE OF NY')
+    assert ReportExclusions(exclude_aetna=True).excludes("CB", "AETNA HMO", "Therapy", "")
+    assert ReportExclusions(exclude_optum=True).excludes("Jasmine", "Optum", "Utox", "")
+    assert not ReportExclusions(exclude_optum=True).excludes("Jasmine", "Optum", "Therapy", "")
+    assert ReportExclusions(exclude_bcb_anthem_ct=True).excludes(
+        "Jasmine", "BCB Anthem CT", "Residential Program", "")
+    assert ReportExclusions(exclude_detox_residential=True).excludes(
+        "CB", "Magellan", "Detox Admission", "")
 
-    assert is_cathy_payer('UBH')
-    assert is_cathy_payer('ubh')
-    assert is_cathy_payer('UBH/Optum')
-    assert is_cathy_payer('United Behavioral Health')
+    # Anthem is removed from Cathy's and Jasmine's reports only.
+    anthem = ReportExclusions(exclude_anthem_cathy_jasmine=True)
+    assert anthem.excludes("Cathy", "Anthem", "Therapy", "")
+    assert anthem.excludes("Jasmine", "Anthem", "Therapy", "")
+    assert not anthem.excludes("CB", "Anthem", "Therapy", "")
+    assert anthem.split_exclusions("Anthem", "Therapy", "") == (True, True)
 
-    assert not is_cathy_payer('Aetna')
-    assert not is_cathy_payer('Humana')
-    assert not is_cathy_payer('Optum')
-    assert not is_cathy_payer('BCB Anthem CT')
-    assert not is_cathy_payer('')
-    assert not is_cathy_payer(None)
+    # Free-text exclusions honor their scope; one scoped to a single member
+    # of the split only excludes the row for that person.
+    scoped = ReportExclusions(payer_terms=["cigna"], scope=["Jasmine"])
+    assert scoped.excludes("Jasmine", "Cigna", "Therapy", "")
+    assert not scoped.excludes("Cathy", "Cigna", "Therapy", "")
+    assert scoped.split_exclusions("Cigna", "Therapy", "") == (True, False)
+    assert ReportExclusions(service_terms=["group"]).split_exclusions(
+        "Magellan", "Group Therapy", "") == (True, True)
 
-    # 'ubh' only counts as a whole word, so it does not match inside another word.
-    assert not is_cathy_payer('Dubhampton Health')
-
-
-def test_cathy_all_payer_variants():
-    """Cathy's full payer list adds Emblem, Surest, UBH-HP, and UMR."""
-    # Her usual three still match: the full list is a superset.
-    assert is_cathy_all_payer('Oxford')
-    assert is_cathy_all_payer('ConnectiCare')
-    assert is_cathy_all_payer('United Behavioral Health')
-
-    assert is_cathy_all_payer('Emblem (Optum)')
-    assert is_cathy_all_payer('EMBLEM HEALTH')
-    assert is_cathy_all_payer('Surest (Optum)')
-    assert is_cathy_all_payer('surest')
-    assert is_cathy_all_payer('UMR (Optum)')
-    assert is_cathy_all_payer('umr')
-
-    # UBH-HP already matches the UBH pattern, so it is hers on either list.
-    assert is_cathy_all_payer('UBH-HP (Optum)')
-    assert is_cathy_payer('UBH-HP (Optum)')
-
-    # Payers outside the filter list stay out, on either list.
-    assert not is_cathy_all_payer('Aetna')
-    assert not is_cathy_all_payer('Optum')
-    assert not is_cathy_all_payer('Magellan')
-    assert not is_cathy_all_payer('BCBS - Other NY')
-    assert not is_cathy_all_payer('')
-    assert not is_cathy_all_payer(None)
-
-    # 'umr' only counts as a whole word, so it does not match inside another.
-    assert not is_cathy_all_payer('Sumrall Health')
-
-    # The narrow list does not pick up the added payers.
-    for payer in ('Emblem (Optum)', 'Surest (Optum)', 'UMR (Optum)'):
-        assert not is_cathy_payer(payer), payer
+    # Funding source by division needs both a payer and a division match.
+    division = ReportExclusions(division_payer_terms=["bcbs"], division_terms=["detox"])
+    assert division.excludes("Jasmine", "BCBS NY", "Therapy", "Detox")
+    assert not division.excludes("Jasmine", "BCBS NY", "Therapy", "OP Wilton")
 
 
 def test_aetna_payer():
@@ -463,8 +444,11 @@ if __name__ == '__main__':
     test_self_pay_every_service_every_day_no_exceptions()
     print("✓ test_self_pay_every_service_every_day_no_exceptions passed")
 
-    test_cathy_professional_cap_by_weekday()
-    print("✓ test_cathy_professional_cap_by_weekday passed")
+    test_split_day_alternates_every_calendar_day()
+    print("✓ test_split_day_alternates_every_calendar_day passed")
+
+    test_split_day_falls_back_to_today_for_a_bad_token()
+    print("✓ test_split_day_falls_back_to_today_for_a_bad_token passed")
 
     test_payer_excluded_by_division()
     print("✓ test_payer_excluded_by_division passed")
@@ -475,11 +459,8 @@ if __name__ == '__main__':
     test_case_insensitive_matching()
     print("✓ test_case_insensitive_matching passed")
 
-    test_cathy_payer_variants()
-    print("✓ test_cathy_payer_variants passed")
-
-    test_cathy_all_payer_variants()
-    print("✓ test_cathy_all_payer_variants passed")
+    test_report_exclusions()
+    print("✓ test_report_exclusions passed")
 
     test_aetna_payer()
     print("✓ test_aetna_payer passed")
