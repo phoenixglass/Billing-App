@@ -10,17 +10,10 @@ import logging
 from pathlib import Path
 
 from billing_rules import (
-    is_aetna_payer,
     is_wm_program_level,
-    is_anthem_payer,
-    is_bcb_anthem_ct_php_res_detox,
-    _is_drug_screen as is_drug_screen,
-    CATHY_PAYERS,
-    CATHY_ALL_PAYERS,
     validate_custom_report_name,
     parse_terms,
-    matches_any_term,
-    payer_excluded_by_division,
+    ReportExclusions,
     assign_staff,
     finalize_workbook,
 )
@@ -272,8 +265,6 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                      exclude_detox_residential: bool = False,
                      include_programming: bool = False,
                      exclude_aetna: bool = False,
-                     cathy_report: bool = False,
-                     cathy_all_payers: bool = False,
                      skip_cathy: bool = False,
                      split_day: str = None,
                      exclude_payer_terms: list = None,
@@ -286,10 +277,15 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                      division_exclude_division_terms: list = None):
     """Process the uploaded workbook.
 
-    The four exclude_* flags and include_programming/cathy_report/
-    cathy_all_payers/skip_cathy are all per-run options driven by the
-    checkboxes below; every one of them is off by default, so an unchecked
-    run follows the standard daily schedule.
+    The exclude_* flags and include_programming/skip_cathy are all per-run
+    options driven by the checkboxes below; every one of them is off by
+    default, so an unchecked run follows the standard daily schedule.
+
+    Every exclusion (the exclude_* flags plus the free-text fields below)
+    goes into one ReportExclusions, which is used both to filter the
+    individual workbooks and — before that — to leave excluded rows out of
+    the Jasmine/Cathy half-and-half count, so the rows that actually reach
+    their two workbooks are what gets divided in half.
 
     exclude_payer_terms/exclude_service_terms are the free-text custom
     exclusion fields: any row whose Payer or Service contains one of these
@@ -314,14 +310,23 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
     report either way, matching every other exclusion here.
 
     custom_report_name/custom_report_payer_terms/
-    custom_report_professional_only configure a second, generic Cathy-shaped
+    custom_report_professional_only configure a custom
     report: matching rows go to a new named staff member with their own
     workbook, without a code change. See assign_staff's docstring for the
     exact placement/priority rules.
     """
-    # "Cathy report: all of her payers" runs her report by itself, so the
-    # operator only has to check the one box.
-    cathy_report = cathy_report or cathy_all_payers
+    exclusions = ReportExclusions(
+        exclude_optum=exclude_optum,
+        exclude_bcb_anthem_ct=exclude_bcb_anthem_ct,
+        exclude_anthem_cathy_jasmine=exclude_anthem_cathy_jasmine_owm,
+        exclude_aetna=exclude_aetna,
+        exclude_detox_residential=exclude_detox_residential,
+        payer_terms=exclude_payer_terms,
+        service_terms=exclude_service_terms,
+        scope=exclude_scope,
+        division_payer_terms=division_exclude_payer_terms,
+        division_terms=division_exclude_division_terms,
+    )
     if custom_report_name:
         validate_custom_report_name(custom_report_name)
     tmp_path = None
@@ -344,10 +349,9 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
         invalid_count = step_1_extract_invalid(ws)
         split_day = assign_staff(
             ws, date_token, include_programming=include_programming,
-            assign_cathy=cathy_report,
-            cathy_all_payers=cathy_all_payers,
             skip_cathy=skip_cathy,
             split_day=split_day,
+            exclusions=exclusions,
             custom_report_name=custom_report_name,
             custom_report_payer_terms=custom_report_payer_terms,
             custom_report_professional_only=custom_report_professional_only)
@@ -399,58 +403,14 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
             for row in range(2, ws.max_row + 1):
                 assigned_staff = ws.cell(row, 1).value
                 if assigned_staff == staff_name:
-                    # Exclude Optum utox rows from all individual workbooks
-                    if (exclude_optum and service_col is not None and
-                            payer_col is not None):
-                        service_val = str(ws.cell(row, service_col).value or "")
-                        payer_val = str(ws.cell(row, payer_col).value or "").lower()
-                        if is_drug_screen(service_val) and "optum" in payer_val:
-                            continue
-                    if (exclude_bcb_anthem_ct and service_col is not None and
-                            payer_col is not None):
-                        service_val = str(ws.cell(row, service_col).value or "")
-                        payer_val = str(ws.cell(row, payer_col).value or "")
-                        if is_bcb_anthem_ct_php_res_detox(payer_val, service_val):
-                            continue
-                    if (exclude_anthem_cathy_jasmine_owm and
-                            assigned_staff in ("Cathy", "Jasmine") and
-                            payer_col is not None):
-                        payer_val = str(ws.cell(row, payer_col).value or "")
-                        if is_anthem_payer(payer_val):
-                            continue
-                    # Exclude Aetna rows from every individual workbook;
-                    # they are still assigned in the Masters report.
-                    if exclude_aetna and payer_col is not None:
-                        payer_val = str(ws.cell(row, payer_col).value or "")
-                        if is_aetna_payer(payer_val):
-                            continue
-                    if exclude_detox_residential and service_col is not None:
-                        service_val = str(ws.cell(row, service_col).value or "").lower()
-                        if "detox" in service_val or "residential" in service_val:
-                            continue
-                    # Remove a funding source (Payer) by division (GROUPFLD1):
-                    # only excluded when both a payer term and a division
-                    # term are entered and both match this row.
-                    if (division_exclude_payer_terms and division_exclude_division_terms
-                            and payer_col is not None and division_col is not None):
-                        payer_val = str(ws.cell(row, payer_col).value or "")
-                        division_val = str(ws.cell(row, division_col).value or "")
-                        if payer_excluded_by_division(
-                                payer_val, division_val,
-                                division_exclude_payer_terms, division_exclude_division_terms):
-                            continue
-                    # Custom per-run exclusions (free text, no code change
-                    # needed): skip if this staff is in scope (or scope is
-                    # empty, meaning everyone) and the payer/service matches.
-                    in_scope = not exclude_scope or assigned_staff in exclude_scope
-                    if in_scope and exclude_payer_terms and payer_col is not None:
-                        payer_val = str(ws.cell(row, payer_col).value or "")
-                        if matches_any_term(payer_val, exclude_payer_terms):
-                            continue
-                    if in_scope and exclude_service_terms and service_col is not None:
-                        service_val = str(ws.cell(row, service_col).value or "")
-                        if matches_any_term(service_val, exclude_service_terms):
-                            continue
+                    # Per-run report exclusions; the Masters report keeps
+                    # every row.
+                    if exclusions.excludes(
+                            assigned_staff,
+                            str(ws.cell(row, payer_col).value or "") if payer_col else "",
+                            str(ws.cell(row, service_col).value or "") if service_col else "",
+                            str(ws.cell(row, division_col).value or "") if division_col else ""):
+                        continue
                     # Skip WM/OP WM program level rows for all staff except Melissa
                     if (staff_name != "Melissa" and
                             program_level_col is not None and
@@ -563,45 +523,14 @@ exclude_aetna = st.checkbox(
     )
 )
 
-cathy_report = st.checkbox(
-    "Cathy carve-out: Professional services only for "
-    + ", ".join(CATHY_PAYERS),
-    value=False,
-    help=(
-        "When checked, Insurance rows whose Claim Type is Professional (CMS-1500 or "
-        "UB-04) and whose payer is Oxford, ConnectiCare, or UBH are assigned to "
-        "Cathy, whatever the service is — IOP for those payers is hers too. Those "
-        "rows leave the shared Jasmine/Cathy pool, so no row is worked twice — "
-        "the daily half-and-half split then applies to what is left, so Cathy "
-        "ends up with more than half overall. WM, PHP, and the O'Flynn Karen "
-        "rule still take priority over Cathy."
-    )
-)
-
-cathy_all_payers = st.checkbox(
-    "Cathy carve-out: all of her payers ("
-    + ", ".join(CATHY_ALL_PAYERS)
-    + ")",
-    value=False,
-    help=(
-        "The same Cathy carve-out, run against her full payer list instead of just "
-        "her usual three: it adds Emblem, Surest, UBH-HP, and UMR. Only the payer "
-        "list widens — it is still Professional (CMS-1500/UB-04) Insurance rows "
-        "only, they still leave the shared pool so no row is worked twice, and WM, PHP, "
-        "and the O'Flynn Karen rule still take priority. Checking this runs the "
-        "carve-out on its own; the box above does not also need to be checked."
-    )
-)
-
 skip_cathy = st.checkbox(
     "Don't give Cathy anything",
     value=False,
     help=(
-        "When checked, Cathy is assigned no rows at all for this run — neither her "
-        "payer carve-out above nor her half of the shared pool — and no "
-        "workbook is generated for her. Her half goes to Jasmine instead. Nothing "
-        "is left unassigned: every row still appears in the Masters report with "
-        "an owner."
+        "When checked, Cathy is assigned no rows at all for this run and no "
+        "workbook is generated for her. Her half of the shared pool goes to "
+        "Jasmine instead. Nothing is left unassigned: every row still appears "
+        "in the Masters report with an owner."
     )
 )
 
@@ -631,9 +560,9 @@ custom_report_name = st.text_input(
     help=(
         "When set (with the payer list below), every Insurance row whose Payer "
         "matches goes to this staff member instead of Cathy/Jasmine, and they "
-        "get their own workbook for this run — the same way Cathy's carve-out "
-        "works, for a different payer/staff combination. Must not be Jasmine, "
-        "CB, Melissa, Cathy, or Unable to Bill."
+        "get their own workbook for this run. Those rows are taken out before "
+        "the Jasmine/Cathy split. Must not be Jasmine, CB, Melissa, Cathy, or "
+        "Unable to Bill."
     ),
 )
 
@@ -647,7 +576,7 @@ custom_report_professional_only = st.checkbox(
     "Professional claim types only (CMS-1500/UB-04)",
     value=True,
     help=(
-        "When checked (default, same restriction Cathy has), only Professional "
+        "When checked (default), only Professional "
         "rows for these payers go to this report. Uncheck to match any claim type."
     ),
 )
@@ -756,8 +685,6 @@ if uploaded_file is not None:
             exclude_detox_residential=exclude_detox_residential,
             include_programming=include_programming,
             exclude_aetna=exclude_aetna,
-            cathy_report=cathy_report,
-            cathy_all_payers=cathy_all_payers,
             skip_cathy=skip_cathy,
             split_day=split_day,
             custom_report_name=custom_report_name.strip() if custom_report_name else None,

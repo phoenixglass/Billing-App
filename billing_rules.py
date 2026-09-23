@@ -22,8 +22,8 @@ Daily billing schedule:
   module's weekday helpers gate.
 
 Cathy/Jasmine split (applies to GROUPFLD2 == "Insurance" rows only; no
-Self Pay ever goes to either of them, and Insurance PHP never reaches them
-since it always goes to Melissa). Every day of the week, everything that
+Self Pay ever goes to either of them, and PHP never reaches them since it
+goes to Melissa). Every day of the week, everything that
 goes to Cathy or Jasmine is split exactly in half between the two:
 - The "shared pool" is every Insurance row either of them would get:
   Professional rows (Claim Type CMS-1500 or UB-04), IOP (including
@@ -45,28 +45,17 @@ standard schedule unless the operator turns it on for that run):
 - include_programming: bill Programming (Detox, Residential) regardless of
   the weekday, so it can be included on a Monday or Wednesday. E-care is
   unaffected and stays Tuesday-only.
-- Cathy report: pull every Professional (CMS-1500/UB-04) Insurance row
-  whose Payer is Oxford, ConnectiCare, or UBH (see is_cathy_payer) out of
-  the shared pool and assign it to Cathy instead, so a row is never
-  worked twice. Whatever the service is, it is hers, IOP included. WM,
-  PHP and the O'Flynn Karen rule still take priority over it. This is on
-  top of, not instead of, Cathy's half of the shared pool above; it
-  claims its rows before the split, so with it on Cathy ends up with
-  more than half.
-- Cathy report, all of her payers: the same report run against Cathy's
-  full payer list (see is_cathy_all_payer / CATHY_ALL_PAYERS) instead of
-  just her usual three. Only the payer list widens; it is still
-  Professional Insurance rows only, and it turns the Cathy report on by
-  itself.
-- Nothing for Cathy: give Cathy no rows at all for the run — neither her
-  payer carve-out nor her half of the shared pool. The whole pool goes to
-  Jasmine instead, and no workbook is generated for her.
+- Nothing for Cathy: give Cathy no rows at all for the run. The whole
+  shared pool goes to Jasmine instead, and no workbook is generated for
+  her.
 - split_day: force "A" or "B" for this run instead of deriving it from
   the file's date, in case the alternation ever needs correcting.
-- Exclude Aetna: drop Aetna rows (see is_aetna_payer) from the individual
-  staff reports; they stay in the Masters workbook.
+- Report exclusions (Exclude Aetna, Remove Anthem, the free-text payer/
+  service/division exclusions, etc. — see ReportExclusions): drop rows
+  from the individual staff reports; they stay in the Masters workbook.
+  They are applied before the Jasmine/Cathy split, so the rows that
+  actually reach the two reports are what gets divided in half.
 """
-import re
 from datetime import date, datetime
 from typing import Tuple
 
@@ -87,29 +76,6 @@ PHP_KEYWORDS = ("partial hospitalization", "php")
 # day, change this date (or force the day for one run via split_day).
 SPLIT_DAY_A_ANCHOR = date(2026, 9, 23)
 SPLIT_DAYS = ("A", "B")
-
-# Payers that go to Cathy's Professional-services-only report when that
-# optional report is turned on. Matching is case-insensitive and tolerant of
-# the spelling variants these payers appear with in the Payer column
-# ("ConnectiCare"/"Connecti Care", "UBH"/"United Behavioral Health").
-CATHY_PAYERS = ("Oxford", "ConnectiCare", "UBH")
-_CATHY_PAYER_RE = re.compile(
-    r"oxford|connecti[\s\-]?care|\bubh\b|united\s+behavioral\s+health",
-    re.IGNORECASE,
-)
-
-# The full payer list Cathy can be given for a run: her usual three plus the
-# Optum-family plans that sit alongside them in the report's payer filter.
-# "UBH-HP" is spelled out here for the operator's benefit, but it already
-# matches the UBH pattern above, so it is Cathy's under either payer list.
-CATHY_ALL_PAYERS = ("ConnectiCare", "Emblem", "Oxford", "Surest", "UBH",
-                    "UBH-HP", "UMR")
-_CATHY_ALL_PAYER_RE = re.compile(
-    r"oxford|connecti[\s\-]?care|\bubh\b|united\s+behavioral\s+health"
-    r"|emblem|surest|\bumr\b",
-    re.IGNORECASE,
-)
-
 
 def parse_weekday_from_token(date_token: str) -> Tuple[int, bool]:
     """
@@ -192,26 +158,6 @@ def is_professional_claim_type(claim_type: str) -> bool:
     return (claim_type or "").strip().upper() in ("CMS-1500", "UB-04")
 
 
-def is_cathy_payer(payer: str) -> bool:
-    """Return True if the Payer column value is Oxford, ConnectiCare, or UBH.
-
-    Used by the optional Cathy report, which takes only Professional
-    (CMS-1500/UB-04) Insurance rows for these three payers.
-    """
-    return bool(_CATHY_PAYER_RE.search(payer or ""))
-
-
-def is_cathy_all_payer(payer: str) -> bool:
-    """Return True if the Payer column value is on Cathy's full payer list.
-
-    A superset of is_cathy_payer: her usual three payers plus Emblem,
-    Surest, UBH-HP and UMR. Used by the optional "all of her payers"
-    variant of the Cathy report, which is otherwise identical — still
-    Professional (CMS-1500/UB-04) Insurance rows only.
-    """
-    return bool(_CATHY_ALL_PAYER_RE.search(payer or ""))
-
-
 def is_aetna_payer(payer: str) -> bool:
     """Return True if the Payer column value refers to Aetna."""
     return "aetna" in (payer or "").lower()
@@ -269,6 +215,82 @@ def is_bcb_anthem_ct_php_res_detox(payer: str, service: str) -> bool:
             any(s in (service or "").lower() for s in ["partial hospitalization", "residential", "detox"]))
 
 
+class ReportExclusions:
+    """The per-run options that keep rows out of the individual staff reports.
+
+    Every one of these is off by default. Excluded rows are still assigned
+    an owner in the Masters workbook; they are only left out of the
+    individual workbooks. app.py and "Unbilled Step 1.py" both filter their
+    reports through excludes(), and assign_staff uses the same check to
+    leave excluded rows out of the Jasmine/Cathy half-and-half count, so
+    the two reports come out even after the exclusions are applied.
+
+    - exclude_optum: Optum drug screen (utox) rows.
+    - exclude_bcb_anthem_ct: BCB Anthem CT PHP/Residential/Detox rows.
+    - exclude_anthem_cathy_jasmine: Anthem rows, from Cathy's and
+      Jasmine's reports only.
+    - exclude_aetna: Aetna rows.
+    - exclude_detox_residential: Detox/Residential rows.
+    - division_payer_terms/division_terms: rows whose Payer matches one of
+      division_payer_terms AND whose GROUPFLD1 matches one of
+      division_terms (see payer_excluded_by_division).
+    - payer_terms/service_terms: free-text payer/service exclusions,
+      limited to the staff named in scope (empty scope = everyone).
+    """
+
+    def __init__(self, exclude_optum: bool = False, exclude_bcb_anthem_ct: bool = False,
+                 exclude_anthem_cathy_jasmine: bool = False, exclude_aetna: bool = False,
+                 exclude_detox_residential: bool = False,
+                 payer_terms: list = None, service_terms: list = None, scope: list = None,
+                 division_payer_terms: list = None, division_terms: list = None):
+        self.exclude_optum = exclude_optum
+        self.exclude_bcb_anthem_ct = exclude_bcb_anthem_ct
+        self.exclude_anthem_cathy_jasmine = exclude_anthem_cathy_jasmine
+        self.exclude_aetna = exclude_aetna
+        self.exclude_detox_residential = exclude_detox_residential
+        self.payer_terms = payer_terms or []
+        self.service_terms = service_terms or []
+        self.scope = scope or []
+        self.division_payer_terms = division_payer_terms or []
+        self.division_terms = division_terms or []
+
+    def excludes(self, staff: str, payer: str, service: str, division: str) -> bool:
+        """Return True if this row should be left out of staff's report."""
+        payer = payer or ""
+        service = service or ""
+        if self.exclude_optum and _is_drug_screen(service) and "optum" in payer.lower():
+            return True
+        if self.exclude_bcb_anthem_ct and is_bcb_anthem_ct_php_res_detox(payer, service):
+            return True
+        if (self.exclude_anthem_cathy_jasmine and staff in ("Cathy", "Jasmine")
+                and is_anthem_payer(payer)):
+            return True
+        if self.exclude_aetna and is_aetna_payer(payer):
+            return True
+        if self.exclude_detox_residential and _is_programming_service(service):
+            return True
+        if payer_excluded_by_division(payer, division or "",
+                                      self.division_payer_terms, self.division_terms):
+            return True
+        if not self.scope or staff in self.scope:
+            if matches_any_term(payer, self.payer_terms):
+                return True
+            if matches_any_term(service, self.service_terms):
+                return True
+        return False
+
+    def excludes_from_split(self, payer: str, service: str, division: str) -> bool:
+        """Return True if the row would be left out of the report whichever of
+        Jasmine or Cathy it went to, so it shouldn't count toward the split.
+
+        A free-text exclusion scoped to only one of the two can't be known
+        until the split decides who owns the row, so it doesn't count here;
+        it is still applied to that person's report afterwards.
+        """
+        return (self.excludes("Jasmine", payer, service, division)
+                and self.excludes("Cathy", payer, service, division))
+
+
 # Staff names assign_staff already routes rows to on its own. A custom
 # report's name (see assign_staff's custom_report_name) must not collide
 # with one of these, or its rows would be indistinguishable from that
@@ -287,8 +309,8 @@ def validate_custom_report_name(name: str) -> None:
 
 
 def assign_staff(ws, date_token: str = None, include_programming: bool = False,
-                 assign_cathy: bool = False, cathy_all_payers: bool = False,
                  skip_cathy: bool = False, split_day: str = None,
+                 exclusions: ReportExclusions = None,
                  custom_report_name: str = None, custom_report_payer_terms: list = None,
                  custom_report_professional_only: bool = True):
     """Assign staff names based on the standard daily billing rules.
@@ -308,8 +330,14 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       every day), billable Programming (Detox, Residential) or e-care for
       that weekday, and any other billable Insurance row whose Claim Type
       is not CMS-1500/UB-04 (i.e. institutional/837I). The pool is sorted
-      alphabetically by Client and cut at its exact midpoint; with an odd
-      row count the second half gets the one extra row.
+      alphabetically by Client and cut at its exact midpoint — even if that
+      falls in the middle of a letter, or between two rows for the same
+      client. With an odd row count the second half gets the one extra row.
+    - Rows the per-run report exclusions (see ReportExclusions) would keep
+      out of both Jasmine's and Cathy's reports don't count toward the
+      split, so the halves are equal in what actually reaches the two
+      reports. They still get an owner in the Masters workbook: whoever's
+      half they sort into alphabetically.
     - The halves alternate daily (see split_day_for_date_token): on Day A
       Jasmine gets the first (A-M) half and Cathy the second (N-Z) half;
       on Day B they swap.
@@ -318,43 +346,28 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     - Melissa (WM/OP WM Program Level, PHP/Partial Hospitalization, or
       Aetna/Humana Detox/Residential) and the O'Flynn Karen OP
       Chappaqua/OP NYC "Unable to Bill" rule take priority over all of the
-      above. All Insurance PHP goes to Melissa every day — ahead of the
-      O'Flynn Karen rule too — and is assigned to her in the Masters
-      spreadsheet; she does not get an individual report, and PHP is
-      billed only on Tuesdays as an operational matter.
+      above. PHP rows are assigned to Melissa every day in the Masters
+      spreadsheet (except O'Flynn Karen OP Chappaqua/OP NYC PHP, which
+      stays Unable to Bill); she does not get an individual report, and
+      PHP is billed only on Tuesdays as an operational matter.
 
     Optional, per-run overrides (all off by default) sit on top of the
     schedule above:
     - include_programming: Programming (Detox, Residential) is billable
       regardless of the weekday, so it can be worked on a Monday or
       Wednesday. E-care is unaffected and stays Tuesday-only.
-    - assign_cathy: every Professional (CMS-1500/UB-04) Insurance row whose
-      Payer is Oxford, ConnectiCare, or UBH goes to Cathy instead of into
-      the shared pool, so no row is worked twice. Whatever the service is,
-      it is hers, IOP included. The rules ahead of her (Self Pay, WM,
-      O'Flynn Karen, Aetna/Humana Detox/Residential, and PHP) still take
-      priority. This is on top of, not instead of, her half of the shared
-      pool, so with it on Cathy ends up with more than half overall.
-    - cathy_all_payers: run that same Cathy rule against her full payer
-      list (CATHY_ALL_PAYERS) instead of just her usual three — adding
-      Emblem, Surest, UBH-HP and UMR. Only the payer list widens: it is
-      still Professional Insurance rows only, and the same rules still
-      take priority over her. This turns the Cathy report on by itself,
-      whether or not assign_cathy is also set.
-    - skip_cathy: Cathy is given no rows at all — neither her payer
-      carve-out (assign_cathy/cathy_all_payers are forced off) nor her
-      half of the shared pool. The whole pool goes to Jasmine.
+    - skip_cathy: Cathy is given no rows at all; the whole shared pool
+      goes to Jasmine.
     - split_day: "A" or "B" to force that day's split for this run instead
       of deriving it from date_token.
+    - exclusions: the run's ReportExclusions, so rows excluded from both
+      reports are left out of the split count (see above).
     - custom_report_name/custom_report_payer_terms/
-      custom_report_professional_only: a second, generic "Cathy slot" for
-      routing a specific payer's rows to a different named staff member
+      custom_report_professional_only: a custom report for routing a specific payer's rows to a different named staff member
       without a code change. When custom_report_name and
       custom_report_payer_terms are both set, every Insurance row whose
-      Payer contains one of those terms is that staff's — same placement
-      as Cathy's carve-out (ahead of the shared pool), checked after
-      Cathy so the two never claim the same row.
-      custom_report_professional_only (default True, matching Cathy)
+      Payer contains one of those terms is that staff's, ahead of the
+      shared pool. custom_report_professional_only (default True)
       restricts it to CMS-1500/UB-04 claim types; set it False to match
       any claim type instead. The name must not collide with a reserved
       staff name (see RESERVED_STAFF_NAMES/validate_custom_report_name).
@@ -363,22 +376,19 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
         ws: Worksheet to process
         date_token: Date string in MMDDYYYY format (from filename). If None, uses current date.
         include_programming: When True, bill Programming regardless of weekday.
-        assign_cathy: When True, route Oxford/ConnectiCare/UBH Professional
-            Insurance rows to Cathy.
-        cathy_all_payers: When True, give Cathy her full payer list instead
-            of her usual three, and turn her report on by itself.
         skip_cathy: When True, assign Cathy nothing at all; Jasmine takes
             the whole shared pool.
         split_day: "A" or "B" to force the split for this run; None (the
             default) derives it from date_token.
+        exclusions: ReportExclusions for this run; None means no
+            exclusions.
         custom_report_name: When set (with custom_report_payer_terms), the
             staff name to assign matching rows to.
         custom_report_payer_terms: When set (with custom_report_name), payer
             terms (case-insensitive substring match) that route a row to
             custom_report_name.
         custom_report_professional_only: When True (default), the custom
-            report only claims Professional (CMS-1500/UB-04) rows, like
-            Cathy. Set False to match any claim type.
+            report only claims Professional (CMS-1500/UB-04) rows. Set False to match any claim type.
 
     Returns:
         The split day that was used for this run, "A" or "B".
@@ -424,20 +434,14 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             raise ValueError(f"split_day must be 'A' or 'B', not {split_day!r}")
     print(f"Jasmine/Cathy split: Day {split_day}")
 
-    # "All of her payers" implies the Cathy report: checking that option
-    # alone is enough to run it.
-    assign_cathy = assign_cathy or cathy_all_payers
-    # skip_cathy means Cathy gets nothing at all this run, including her
-    # payer carve-out.
-    if skip_cathy:
-        assign_cathy = False
-    is_cathy_row_payer = is_cathy_all_payer if cathy_all_payers else is_cathy_payer
+    if exclusions is None:
+        exclusions = ReportExclusions()
 
     custom_report_active = bool(custom_report_name and custom_report_payer_terms)
 
     row_data_map = {}
     fixed_staff = {}        # original_row -> staff already decided
-    shared_pool = []        # (original_row, client) to be split in half between Jasmine and Cathy
+    shared_pool = []        # (original_row, client, excluded) to be split in half between Jasmine and Cathy
     other_rows = []         # original_row order for every row not in the shared pool
 
     for row in range(2, ws.max_row + 1):
@@ -461,11 +465,6 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
         if 'program_level' in cols and is_wm_program_level(ws.cell(row, cols['program_level']).value):
             staff = "Melissa"
 
-        # PHP/Partial Hospitalization always goes to Melissa, every day —
-        # all of it, so this sits ahead of the O'Flynn Karen rule below.
-        if not staff and is_php_service(service):
-            staff = "Melissa"
-
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
         if not staff and 'billing_provider' in cols and 'group_fld1' in cols:
             billing_provider = str(ws.cell(row, cols['billing_provider']).value or "").strip()
@@ -482,6 +481,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             if has_detox_res and has_insurance and not _is_drug_screen(service):
                 staff = "Melissa"
 
+        # PHP/Partial Hospitalization always goes to Melissa, every day
+        # (after the O'Flynn Karen rule, whose PHP stays Unable to Bill).
+        if not staff and is_php_service(service):
+            staff = "Melissa"
+
         if staff:
             fixed_staff[row] = staff
             other_rows.append(row)
@@ -493,19 +497,8 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
-        # Cathy (optional): every Professional row for her payers is hers,
-        # whatever the service is, IOP included. Her rows leave the shared
-        # Jasmine/Cathy pool entirely rather than being worked twice.
-        if (assign_cathy and is_professional_claim_type(claim_type)
-                and is_cathy_row_payer(payer)):
-            fixed_staff[row] = "Cathy"
-            other_rows.append(row)
-            continue
-
-        # Custom report (optional): a second, generic Cathy-shaped slot for
-        # routing a specific payer's rows to a different staff member,
-        # checked after Cathy so the two never claim the same row. Same
-        # placement as Cathy — ahead of the shared pool.
+        # Custom report (optional): routes a specific payer's rows to a
+        # different staff member, ahead of the shared pool.
         if (custom_report_active
                 and (not custom_report_professional_only or is_professional_claim_type(claim_type))
                 and matches_any_term(payer, custom_report_payer_terms)):
@@ -525,16 +518,22 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             continue
 
         client = str(ws.cell(row, cols['client']).value or "").strip()
-        shared_pool.append((row, client))
+        division = (str(ws.cell(row, cols['group_fld1']).value or "")
+                    if 'group_fld1' in cols else "")
+        excluded = exclusions.excludes_from_split(
+            str(ws.cell(row, cols['payer']).value or ""), service, division)
+        shared_pool.append((row, client, excluded))
 
     # Move the shared pool to the top of the sheet, sorted alphabetically by
     # Client; every other row keeps its original relative order after that.
     shared_pool.sort(key=lambda x: x[1].lower())
 
-    # Cut the sorted pool at its exact midpoint. Day A: Jasmine takes the
-    # first (A-M) half, Cathy the second (N-Z) half; Day B: the reverse.
-    # With skip_cathy, Jasmine takes both halves.
-    midpoint = len(shared_pool) // 2
+    # Cut the sorted pool at the exact midpoint of the rows that will
+    # actually reach a report (excluded rows don't count), even if that
+    # lands mid-letter or mid-client. Day A: Jasmine takes the first (A-M)
+    # half, Cathy the second (N-Z) half; Day B: the reverse. With
+    # skip_cathy, Jasmine takes both halves.
+    midpoint = sum(1 for _, _, excluded in shared_pool if not excluded) // 2
     if split_day == "A":
         first_half_staff, second_half_staff = "Jasmine", "Cathy"
     else:
@@ -542,16 +541,23 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     if skip_cathy:
         first_half_staff = second_half_staff = "Jasmine"
 
-    ordered_rows = [row for row, _ in shared_pool] + other_rows
+    ordered_rows = [row for row, _, _ in shared_pool] + other_rows
     new_row_pos = 2
     for original_row in ordered_rows:
         for col in range(1, ws.max_column + 1):
             ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
         new_row_pos += 1
 
+    # An excluded row still gets an owner in the Masters workbook: whoever's
+    # half it sorts into, i.e. the first half until `midpoint` counted rows
+    # have been handed out.
     new_row_pos = 2
-    for idx in range(len(shared_pool)):
-        ws.cell(new_row_pos, 1).value = first_half_staff if idx < midpoint else second_half_staff
+    counted = 0
+    for _, _, excluded in shared_pool:
+        in_first_half = counted < midpoint
+        ws.cell(new_row_pos, 1).value = first_half_staff if in_first_half else second_half_staff
+        if not excluded:
+            counted += 1
         new_row_pos += 1
     for original_row in other_rows:
         ws.cell(new_row_pos, 1).value = fixed_staff[original_row]
