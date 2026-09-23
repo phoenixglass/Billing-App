@@ -221,9 +221,9 @@ class ReportExclusions:
     Every one of these is off by default. Excluded rows are still assigned
     an owner in the Masters workbook; they are only left out of the
     individual workbooks. app.py and "Unbilled Step 1.py" both filter their
-    reports through excludes(), and assign_staff uses the same check to
-    leave excluded rows out of the Jasmine/Cathy half-and-half count, so
-    the two reports come out even after the exclusions are applied.
+    reports through excludes(), and assign_staff uses the same check (see
+    split_exclusions) when it divides the shared pool, so Jasmine's and
+    Cathy's reports come out even after the exclusions are applied.
 
     - exclude_optum: Optum drug screen (utox) rows.
     - exclude_bcb_anthem_ct: BCB Anthem CT PHP/Residential/Detox rows.
@@ -279,16 +279,16 @@ class ReportExclusions:
                 return True
         return False
 
-    def excludes_from_split(self, payer: str, service: str, division: str) -> bool:
-        """Return True if the row would be left out of the report whichever of
-        Jasmine or Cathy it went to, so it shouldn't count toward the split.
+    def split_exclusions(self, payer: str, service: str, division: str):
+        """Return (excluded for Jasmine, excluded for Cathy) for a shared-pool row.
 
-        A free-text exclusion scoped to only one of the two can't be known
-        until the split decides who owns the row, so it doesn't count here;
-        it is still applied to that person's report afterwards.
+        The Jasmine/Cathy split uses this to keep the two reports even: a
+        row excluded for both doesn't count toward the split, and a row
+        excluded for only one of them (a free-text exclusion scoped to just
+        that person) is given to the other one.
         """
-        return (self.excludes("Jasmine", payer, service, division)
-                and self.excludes("Cathy", payer, service, division))
+        return (self.excludes("Jasmine", payer, service, division),
+                self.excludes("Cathy", payer, service, division))
 
 
 # Staff names assign_staff already routes rows to on its own. A custom
@@ -333,11 +333,19 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       alphabetically by Client and cut at its exact midpoint — even if that
       falls in the middle of a letter, or between two rows for the same
       client. With an odd row count the second half gets the one extra row.
-    - Rows the per-run report exclusions (see ReportExclusions) would keep
-      out of both Jasmine's and Cathy's reports don't count toward the
-      split, so the halves are equal in what actually reaches the two
-      reports. They still get an owner in the Masters workbook: whoever's
-      half they sort into alphabetically.
+    - Evenness comes before the alphabet. The split is counted in rows
+      that actually reach Jasmine's and Cathy's reports, after the per-run
+      report exclusions (see ReportExclusions):
+      - a row excluded from both reports doesn't count. It still gets an
+        owner in the Masters workbook: whoever's half it sorts into;
+      - a row excluded from only one person's report (a free-text
+        exclusion scoped to just Jasmine or just Cathy) goes to the other
+        person and counts toward their half;
+      - the remaining rows fill out each person's share in alphabetical
+        order, first-half person first, so the two reports end up equal
+        (within one row). If the one-sided rows alone are more than half,
+        the other person takes every remaining row — as close to even as
+        possible.
     - The halves alternate daily (see split_day_for_date_token): on Day A
       Jasmine gets the first (A-M) half and Cathy the second (N-Z) half;
       on Day B they swap.
@@ -360,8 +368,8 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       goes to Jasmine.
     - split_day: "A" or "B" to force that day's split for this run instead
       of deriving it from date_token.
-    - exclusions: the run's ReportExclusions, so rows excluded from both
-      reports are left out of the split count (see above).
+    - exclusions: the run's ReportExclusions, so the split can be counted
+      in reportable rows (see above).
     - custom_report_name/custom_report_payer_terms/
       custom_report_professional_only: a custom report for routing a specific payer's rows to a different named staff member
       without a code change. When custom_report_name and
@@ -441,7 +449,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
     row_data_map = {}
     fixed_staff = {}        # original_row -> staff already decided
-    shared_pool = []        # (original_row, client, excluded) to be split in half between Jasmine and Cathy
+    shared_pool = []        # (original_row, client, excl_jasmine, excl_cathy) to be split between Jasmine and Cathy
     other_rows = []         # original_row order for every row not in the shared pool
 
     for row in range(2, ws.max_row + 1):
@@ -520,44 +528,73 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
         client = str(ws.cell(row, cols['client']).value or "").strip()
         division = (str(ws.cell(row, cols['group_fld1']).value or "")
                     if 'group_fld1' in cols else "")
-        excluded = exclusions.excludes_from_split(
+        excl_jasmine, excl_cathy = exclusions.split_exclusions(
             str(ws.cell(row, cols['payer']).value or ""), service, division)
-        shared_pool.append((row, client, excluded))
+        shared_pool.append((row, client, excl_jasmine, excl_cathy))
 
     # Move the shared pool to the top of the sheet, sorted alphabetically by
     # Client; every other row keeps its original relative order after that.
     shared_pool.sort(key=lambda x: x[1].lower())
 
-    # Cut the sorted pool at the exact midpoint of the rows that will
-    # actually reach a report (excluded rows don't count), even if that
-    # lands mid-letter or mid-client. Day A: Jasmine takes the first (A-M)
-    # half, Cathy the second (N-Z) half; Day B: the reverse. With
-    # skip_cathy, Jasmine takes both halves.
-    midpoint = sum(1 for _, _, excluded in shared_pool if not excluded) // 2
+    # Day A: Jasmine takes the first (A-M) half, Cathy the second (N-Z)
+    # half; Day B: the reverse.
     if split_day == "A":
         first_half_staff, second_half_staff = "Jasmine", "Cathy"
     else:
         first_half_staff, second_half_staff = "Cathy", "Jasmine"
-    if skip_cathy:
-        first_half_staff = second_half_staff = "Jasmine"
 
-    ordered_rows = [row for row, _, _ in shared_pool] + other_rows
+    def forced_owner(excl_jasmine, excl_cathy):
+        """A row excluded from only one report goes to the other person."""
+        if excl_jasmine and not excl_cathy:
+            return "Cathy"
+        if excl_cathy and not excl_jasmine:
+            return "Jasmine"
+        return None
+
+    # Evenness comes before the alphabet: split the rows that will actually
+    # reach a report exactly in half (with an odd count the second-half
+    # person gets the extra row), even if the cut lands mid-letter or
+    # mid-client. Rows forced to one person count toward their share; the
+    # free rows fill out the first-half person's share in alphabetical
+    # order and the rest go to the second-half person.
+    reportable = forced_first = free = 0
+    for _, _, excl_jasmine, excl_cathy in shared_pool:
+        if excl_jasmine and excl_cathy:
+            continue
+        reportable += 1
+        owner = forced_owner(excl_jasmine, excl_cathy)
+        if owner is None:
+            free += 1
+        elif owner == first_half_staff:
+            forced_first += 1
+    first_half_free = min(max(reportable // 2 - forced_first, 0), free)
+
+    pool_staff = []
+    free_seen = 0
+    for _, _, excl_jasmine, excl_cathy in shared_pool:
+        in_first_half = free_seen < first_half_free
+        owner = forced_owner(excl_jasmine, excl_cathy)
+        if owner is None:
+            # Free rows and rows excluded from both reports follow the
+            # alphabetical cut; only free rows count toward it.
+            owner = first_half_staff if in_first_half else second_half_staff
+            if not (excl_jasmine and excl_cathy):
+                free_seen += 1
+        pool_staff.append(owner)
+    # With skip_cathy, Jasmine takes the whole pool.
+    if skip_cathy:
+        pool_staff = ["Jasmine"] * len(shared_pool)
+
+    ordered_rows = [row for row, *_ in shared_pool] + other_rows
     new_row_pos = 2
     for original_row in ordered_rows:
         for col in range(1, ws.max_column + 1):
             ws.cell(new_row_pos, col).value = row_data_map[original_row][col - 1]
         new_row_pos += 1
 
-    # An excluded row still gets an owner in the Masters workbook: whoever's
-    # half it sorts into, i.e. the first half until `midpoint` counted rows
-    # have been handed out.
     new_row_pos = 2
-    counted = 0
-    for _, _, excluded in shared_pool:
-        in_first_half = counted < midpoint
-        ws.cell(new_row_pos, 1).value = first_half_staff if in_first_half else second_half_staff
-        if not excluded:
-            counted += 1
+    for owner in pool_staff:
+        ws.cell(new_row_pos, 1).value = owner
         new_row_pos += 1
     for original_row in other_rows:
         ws.cell(new_row_pos, 1).value = fixed_staff[original_row]

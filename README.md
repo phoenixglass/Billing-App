@@ -64,7 +64,7 @@ The days run A, B, A, B, … so whoever had A-M one day has N-Z the next.
   CLI's `--split-day A|B`) overrides the automatic day for one run, in
   case the rotation ever needs correcting. After processing, the app shows
   which day it used.
-- **Exactly half comes first; the alphabet comes second.** The cut sits at
+- **Even comes first; the alphabet comes second.** The cut sits at
   the midpoint of the sorted pool, so the two halves are equal even when
   most clients' names fall in A-M. "A-M" and "N-Z" describe which end of
   the alphabet each half comes from; the actual boundary is wherever the
@@ -74,16 +74,20 @@ The days run A, B, A, B, … so whoever had A-M one day has N-Z the next.
   rows sit right at the midpoint.
 - **Odd row counts:** an exact half isn't possible, so the second (N-Z)
   half gets the one extra row.
-- **Exclusions come first.** Rows the per-run exclusions below (Exclude
-  Aetna, Remove Anthem, the free-text payer/service/division exclusions,
-  etc.) keep out of the reports don't count toward the split, so it's the
-  rows that actually reach Jasmine's and Cathy's workbooks that are
-  divided in half. Excluded rows still appear in the Masters workbook,
-  owned by whoever's half they sort into. One exception: a free-text
-  exclusion limited ("Apply only to these staff") to just Jasmine or just
-  Cathy can't be known until the split decides who owns the row, so it's
-  applied to that person's workbook afterwards and can leave the two
-  uneven.
+- **Exclusions come first.** The split is counted in the rows that
+  actually reach Jasmine's and Cathy's workbooks, after the per-run
+  exclusions below (Exclude Aetna, Remove Anthem, the free-text
+  payer/service/division exclusions, etc.):
+  - A row excluded from both of their workbooks doesn't count. It still
+    appears in the Masters workbook, owned by whoever's half it sorts into.
+  - A row excluded from only one person's workbook (a free-text exclusion
+    with "Apply only to these staff" set to just Jasmine or just Cathy)
+    goes to the **other** person, and counts toward their half. The
+    remaining rows are then divided around those so the two workbooks
+    still come out even, which can shift the alphabetical cut a little.
+  - The only time the two can't be evened out is when the rows excluded
+    for one person outnumber everything else; the other person then gets
+    all the remaining rows, which is as close to even as possible.
 
 The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
 'extended care' (case-insensitive).
@@ -136,7 +140,9 @@ one-off exclusions that don't have a checkbox yet:
 - **Exclude services containing** — the same, matched against the Service
   column. Example: `Group Therapy`.
 - **Apply only to these staff** — an optional list limiting the two fields
-  above to specific staff workbooks (Jasmine, Cathy, CB). Leave it
+  above to specific staff workbooks (Jasmine, Cathy, CB). If it names only
+  one of Jasmine and Cathy, the matching rows go to the other one, so their
+  two workbooks stay even (see "How the split works" above). Leave it
   empty to apply them to every individual workbook, the same way Exclude
   Aetna does.
 

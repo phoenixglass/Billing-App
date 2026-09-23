@@ -325,16 +325,16 @@ def test_report_exclusions():
     assert anthem.excludes("Cathy", "Anthem", "Therapy", "")
     assert anthem.excludes("Jasmine", "Anthem", "Therapy", "")
     assert not anthem.excludes("CB", "Anthem", "Therapy", "")
-    assert anthem.excludes_from_split("Anthem", "Therapy", "")
+    assert anthem.split_exclusions("Anthem", "Therapy", "") == (True, True)
 
     # Free-text exclusions honor their scope; one scoped to a single member
-    # of the split doesn't count as excluded from the split.
+    # of the split only excludes the row for that person.
     scoped = ReportExclusions(payer_terms=["cigna"], scope=["Jasmine"])
     assert scoped.excludes("Jasmine", "Cigna", "Therapy", "")
     assert not scoped.excludes("Cathy", "Cigna", "Therapy", "")
-    assert not scoped.excludes_from_split("Cigna", "Therapy", "")
-    assert ReportExclusions(service_terms=["group"]).excludes_from_split(
-        "Magellan", "Group Therapy", "")
+    assert scoped.split_exclusions("Cigna", "Therapy", "") == (True, False)
+    assert ReportExclusions(service_terms=["group"]).split_exclusions(
+        "Magellan", "Group Therapy", "") == (True, True)
 
     # Funding source by division needs both a payer and a division match.
     division = ReportExclusions(division_payer_terms=["bcbs"], division_terms=["detox"])

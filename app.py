@@ -613,7 +613,11 @@ custom_exclude_scope = st.multiselect(
     "Apply the two custom exclusions above only to these staff (optional)",
     options=["Jasmine", "Cathy", "CB"],
     default=[],
-    help="Leave empty to apply them to every individual workbook, same as Exclude Aetna above.",
+    help=(
+        "Leave empty to apply them to every individual workbook, same as Exclude "
+        "Aetna above. If only one of Jasmine and Cathy is picked, the matching "
+        "rows go to the other one instead, so their two workbooks stay even."
+    ),
 )
 
 custom_exclude_payer_terms = parse_terms(custom_exclude_payers_raw)

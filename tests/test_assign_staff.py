@@ -310,19 +310,77 @@ def test_every_report_exclusion_is_applied_before_the_split():
         assert _report_counts(ws, exclusions) == {"Jasmine": 5, "Cathy": 5}, (payer, service)
 
 
-def test_exclusion_scoped_to_one_of_them_is_applied_after_the_split():
-    """A free-text exclusion limited to only Jasmine (or only Cathy) can't be
-    known until the split picks who owns the row, so it isn't taken out of
-    the count; it is still dropped from that person's report."""
+def test_exclusion_scoped_to_one_person_sends_those_rows_to_the_other():
+    """A free-text exclusion limited to only Jasmine sends the matching rows
+    to Cathy instead, and the rest are split around them so the two
+    reports still come out even — evenness beats the alphabet."""
     rows = _pool_rows(4, prefix="Adams", payer="Cigna")
+    rows += _pool_rows(4, prefix="Baker")
     rows += _pool_rows(4, prefix="Young")
     exclusions = ReportExclusions(payer_terms=["cigna"], scope=["Jasmine"])
 
     ws = _sheet(rows)
     assign_staff(ws, "09232026", exclusions=exclusions)  # Day A: Jasmine A-M
-    assert _assignments(ws).count("Jasmine") == 4
-    assert _assignments(ws).count("Cathy") == 4
-    assert _report_counts(ws, exclusions) == {"Jasmine": 0, "Cathy": 4}
+    staff = _staff_by_client(ws)
+
+    # The Cigna rows would be dropped from Jasmine's report, so they're Cathy's.
+    for i in range(4):
+        assert staff[f"Adams{i:04d}"] == "Cathy"
+    # That puts Cathy at 4 already, so Jasmine takes the next 6 free rows
+    # alphabetically and Cathy the last 2: 6 each.
+    assert [staff[f"Baker{i:04d}"] for i in range(4)] == ["Jasmine"] * 4
+    assert [staff[f"Young{i:04d}"] for i in range(4)] == ["Jasmine", "Jasmine", "Cathy", "Cathy"]
+    assert _report_counts(ws, exclusions) == {"Jasmine": 6, "Cathy": 6}
+
+
+def test_scoped_exclusion_works_on_day_b_and_for_cathy_too():
+    """Same balancing when the exclusion is scoped to Cathy, on a Day B."""
+    rows = _pool_rows(3, prefix="Young", payer="Cigna")
+    rows += _pool_rows(7, prefix="Adams")
+    exclusions = ReportExclusions(payer_terms=["cigna"], scope=["Cathy"])
+
+    ws = _sheet(rows)
+    assign_staff(ws, "09242026", exclusions=exclusions)  # Day B: Cathy A-M
+    staff = _staff_by_client(ws)
+    for i in range(3):
+        assert staff[f"Young{i:04d}"] == "Jasmine"
+    assert _report_counts(ws, exclusions) == {"Jasmine": 5, "Cathy": 5}
+
+
+def test_scoped_exclusion_too_big_to_balance_gets_as_close_as_possible():
+    """If the one-sided rows alone are more than half, the other person
+    takes every remaining row."""
+    rows = _pool_rows(8, prefix="Adams", payer="Cigna")
+    rows += _pool_rows(2, prefix="Young")
+    exclusions = ReportExclusions(payer_terms=["cigna"], scope=["Jasmine"])
+
+    ws = _sheet(rows)
+    assign_staff(ws, "09232026", exclusions=exclusions)
+    assert _report_counts(ws, exclusions) == {"Jasmine": 2, "Cathy": 8}
+    assert all(value for value in _assignments(ws))
+
+
+def test_scoped_and_blanket_exclusions_together_stay_even():
+    rows = _pool_rows(4, prefix="Adams", payer="Aetna")    # excluded for both
+    rows += _pool_rows(3, prefix="Carter", payer="Cigna")  # excluded for Cathy
+    rows += _pool_rows(9, prefix="Nolan")
+    exclusions = ReportExclusions(exclude_aetna=True, payer_terms=["cigna"],
+                                  scope=["Cathy"])
+    for token in ("09232026", "09242026"):
+        ws = _sheet(rows)
+        assign_staff(ws, token, exclusions=exclusions)
+        assert _report_counts(ws, exclusions) == {"Jasmine": 6, "Cathy": 6}, token
+        assert len(_assignments(ws)) == 16
+
+
+def test_skip_cathy_ignores_scoped_exclusions_for_ownership():
+    """With Cathy skipped, Jasmine still owns every pool row."""
+    rows = _pool_rows(4, prefix="Adams", payer="Cigna")
+    rows += _pool_rows(4, prefix="Young")
+    ws = _sheet(rows)
+    assign_staff(ws, "09232026", skip_cathy=True,
+                 exclusions=ReportExclusions(payer_terms=["cigna"], scope=["Jasmine"]))
+    assert set(_assignments(ws)) == {"Jasmine"}
 
 
 def test_former_cathy_payers_are_just_split():

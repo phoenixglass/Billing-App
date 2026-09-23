@@ -349,7 +349,9 @@ if __name__ == "__main__":
     parser.add_argument("--exclude-scope", default="",
                         help="Comma-separated staff names limiting --exclude-payers/"
                              "--exclude-services to those staff's workbooks. Leave "
-                             "unset to apply them to every individual workbook.")
+                             "unset to apply them to every individual workbook. If "
+                             "only one of Jasmine and Cathy is named, the matching "
+                             "rows go to the other one, so their workbooks stay even.")
     parser.add_argument("--custom-report-name", default=None,
                         help="Staff name for a custom report: "
                              "with --custom-report-payers, every Insurance row whose "
