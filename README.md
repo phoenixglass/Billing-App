@@ -20,51 +20,59 @@ service bills every day of the week, with no exceptions (including e-care).
 
 **Insurance** (`GROUPFLD2` = "Insurance") rows are split between **Cathy** and
 **Jasmine**. `GROUPFLD2` values other than "Insurance" or "Self Pay" never
-reach Cathy or Jasmine — they are marked Unable to Bill. Cathy fills the role
-Rosanna used to hold, on top of her own payer-specific carve-out (see the
-Cathy section below) — the two stack and never double-assign the same row.
+reach Cathy or Jasmine — they are marked Unable to Bill.
 
-- **Professional** services (identified by the `Claim Type` column equal to
-  `CMS-1500` or `UB-04` — UB-04 counts as Professional every day) bill every
-  day of the week. The Insurance + CMS-1500/UB-04 rows ("the professional
-  pool") are sorted alphabetically by `Client`. Monday through Friday,
-  Cathy receives the first 150 rows of that sorted pool; the rest of the
-  pool goes to Jasmine. Cathy caps no rows on weekends, so Jasmine gets
-  the whole pool those days.
-- **Programming** services (Detox, Residential) bill Tuesday, Thursday,
-  Friday, and weekends; they are Unable to Bill on Monday and Wednesday. All
-  billable Programming rows go to Jasmine.
-- **IOP** (including Telemed IOP) bills every day of the week, with no
-  exceptions, and always goes to Jasmine, bypassing the professional
-  pool/Cathy split even if Claim Type is CMS-1500 or UB-04 — unless her
-  payer carve-out is on and the row is a Professional row for one of her
-  payers, which is hers (see below).
-- **E-care** bills on Tuesdays only (regardless of Claim Type). Billable e-care
-  rows go to Jasmine.
+**Every day of the week, everything that goes to Cathy or Jasmine is split
+exactly in half between them.** That "shared pool" is every Insurance row
+either of them would get:
+
+- **Professional** services (Claim Type `CMS-1500` or `UB-04` — UB-04
+  counts as Professional every day), which bill every day of the week.
+- **IOP** (including Telemed IOP), which bills every day of the week.
+- **Programming** (Detox, Residential), which bills Tuesday, Thursday,
+  Friday, and weekends; it is Unable to Bill on Monday and Wednesday.
+- **E-care**, which bills on Tuesdays only (regardless of Claim Type).
 - Any other billable Insurance row whose Claim Type is not CMS-1500/UB-04
-  (i.e. institutional/837I) goes to Jasmine, unless it's PHP (always Melissa's).
-- **PHP** (Partial Hospitalization) always goes to **Melissa**, every day — see
-  the Melissa section below. It is not part of the Programming bucket above and
-  never reaches Cathy or Jasmine.
+  (i.e. institutional/837I).
 
-Cathy's professional-pool cap by weekday:
+**PHP** (Partial Hospitalization) is not in the pool: all Insurance PHP goes
+to **Melissa**, every day (see the Melissa section below).
 
-| Day       | Capped staff | Cap      | Report                    |
-|-----------|--------------|----------|----------------------------|
-| Monday    | Cathy        | 150      | 1 header + up to 150 rows |
-| Tuesday   | Cathy        | 150      | 1 header + up to 150 rows |
-| Wednesday | Cathy        | 150      | 1 header + up to 150 rows |
-| Thursday  | Cathy        | 150      | 1 header + up to 150 rows |
-| Friday    | Cathy        | 150      | 1 header + up to 150 rows |
-| Sat/Sun   | —            | 0 (none) | Not generated              |
+### How the split works: Day A and Day B
 
-Everything past Cathy's share of the professional pool goes to Jasmine,
-along with any billable Programming/e-care rows for that day. The per-run
-"Don't give Cathy anything" option drops her cap to zero for every day (and
-turns off her payer carve-out too), so Jasmine takes the whole pool. The
-per-run "Split all services evenly between Jasmine and Cathy" option divides
-everything Jasmine would otherwise get 50/50 with Cathy instead — see
-"Splitting services evenly" below.
+The shared pool is sorted alphabetically by `Client` and cut at its exact
+midpoint into a first half (the A-M side) and a second half (the N-Z side).
+Which half each person gets alternates every day:
+
+| Day   | Jasmine gets              | Cathy gets                |
+|-------|---------------------------|---------------------------|
+| Day A | First half (clients A-M)  | Second half (clients N-Z) |
+| Day B | Second half (clients N-Z) | First half (clients A-M)  |
+
+The days run A, B, A, B, … so whoever had A-M one day has N-Z the next.
+
+- **Which day is which** is worked out automatically from the date in the
+  filename: 09/23/2026 is Day A, and each calendar day after that flips
+  (09/24/2026 is Day B, 09/25/2026 is Day A, and so on). Weekends count, so
+  the rotation stays in step even when a day is skipped. The Day A anchor
+  date is `SPLIT_DAY_A_ANCHOR` in `billing_rules.py`.
+- **Forcing a day:** the app's "Jasmine/Cathy split day" dropdown (or the
+  CLI's `--split-day A|B`) overrides the automatic day for one run, in
+  case the rotation ever needs correcting. After processing, the app shows
+  which day it used.
+- **"Exactly half" is counted in rows, not letters.** The cut sits at the
+  midpoint of the sorted pool, so the two halves are equal even when most
+  clients' names fall in A-M. "A-M" and "N-Z" describe which end of the
+  alphabet each half comes from; the actual boundary is wherever the
+  midpoint lands (for example, Jasmine might get A through "Lopez" and
+  Cathy "Lopez" through Z). A client with several rows can therefore be
+  split across the two halves if their rows sit right at the midpoint.
+- **Odd row counts:** an exact half isn't possible, so the second (N-Z)
+  half gets the one extra row.
+- **Exclusions are applied afterwards.** The per-run exclusions below
+  (Exclude Aetna, Remove Anthem, etc.) remove rows from the individual
+  workbooks after the split, so if they remove more rows from one half
+  than the other, the two workbooks can end up uneven.
 
 The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
 'extended care' (case-insensitive).
@@ -72,13 +80,15 @@ The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
 **Melissa** and the O'Flynn Karen "Unable to Bill" rule take priority over the
 Cathy/Jasmine schedule above:
 - WM/OP WM Program Level rows always go to Melissa.
-- PHP/Partial Hospitalization rows always go to Melissa, every day. She does not
-  get an individual report — PHP rows are assigned to her in the Masters
-  spreadsheet only. PHP is billed only on Tuesdays as an operational matter.
+- All Insurance PHP/Partial Hospitalization rows go to Melissa, every day,
+  whatever the payer or claim type — ahead of the O'Flynn Karen rule below,
+  too. She does not get an individual report — PHP rows are assigned to her
+  in the Masters spreadsheet only. PHP is billed only on Tuesdays as an
+  operational matter. (Self Pay PHP still goes to CB, like all Self Pay.)
 - Detox/Residential rows billed to Aetna or Humana (and not a drug screen) go to
   Melissa.
 - Billing Provider "O'Flynn, Karen" with GROUPFLD1 "OP Chappaqua" or "OP NYC" is
-  always Unable to Bill.
+  Unable to Bill (other than PHP, which is Melissa's).
 
 ## Optional Per-Run Options
 
@@ -92,12 +102,12 @@ schedule above. The command-line script takes the same options as flags.
 | Exclude BCB Anthem CT for PHP, Residential, and Detox | — | Those BCB Anthem CT rows are left out of the individual workbooks. |
 | Remove Anthem from Cathy and Jasmine reports | — | Anthem rows are left out of Cathy's and Jasmine's workbooks. |
 | Don't give anyone Detox or Residential | — | Detox/Residential rows are left out of every individual workbook. |
-| Include Programming (Detox/Residential) today | `--include-programming` | Programming bills regardless of the weekday, so it can be worked on a Monday or Wednesday. Billable Programming rows go to Jasmine as usual. E-care is unaffected and stays Tuesday-only. |
+| Include Programming (Detox/Residential) today | `--include-programming` | Programming bills regardless of the weekday, so it can be worked on a Monday or Wednesday. Billable Programming rows are split between Jasmine and Cathy as usual. E-care is unaffected and stays Tuesday-only. |
 | Exclude Aetna | `--exclude-aetna` | Every Aetna row is left out of the individual workbooks. |
 | Cathy carve-out: Professional services only for Oxford, ConnectiCare, UBH | `--cathy-report` | See the Cathy section below. |
 | Cathy carve-out: all of her payers (ConnectiCare, Emblem, Oxford, Surest, UBH, UBH-HP, UMR) | `--cathy-all-payers` | The same carve-out run against her full payer list instead of just her usual three. Turns the carve-out on by itself — the box above does not also need to be checked. See the Cathy section below. |
-| Don't give Cathy anything | `--no-cathy` | Cathy is assigned no rows at all and gets no workbook — neither her carve-out nor her pool share; her share of the professional pool goes to Jasmine, the same way it does on a weekend. |
-| Split all services evenly between Jasmine and Cathy | `--even-split-jasmine-cathy` | Everything Jasmine would otherwise get (the rest of the pool, plus billable Programming/e-care, plus other billable institutional rows, plus IOP) is split 50/50 with Cathy instead. See "Splitting services evenly" below. |
+| Don't give Cathy anything | `--no-cathy` | Cathy is assigned no rows at all and gets no workbook — neither her carve-out nor her half of the shared pool; Jasmine gets the whole pool. |
+| Jasmine/Cathy split day (dropdown: Automatic / Day A / Day B) | `--split-day A` or `--split-day B` | Forces that day's split for this run instead of working it out from the filename's date. See "How the split works" above. |
 
 Rows excluded by any of these options are still assigned in the Masters
 workbook — the option only controls what reaches the individual reports.
@@ -160,14 +170,13 @@ The command-line script takes the same fields as
 Cathy has two ways to receive rows, and they stack rather than replace one
 another:
 
-1. **Her standing share of the professional pool** — the role Rosanna used
-   to hold (see "Daily Billing Rules" above): up to 150 Professional rows a
-   weekday, sorted alphabetically, with the rest going to Jasmine.
+1. **Her half of the shared pool** (see "Daily Billing Rules" above): the
+   A-M half on Day B, the N-Z half on Day A.
 2. **Her payer carve-out (optional)** — when turned on, **every** Insurance
    row whose `Claim Type` is Professional (`CMS-1500` or `UB-04`) **and**
-   whose `Payer` is on her payer list is assigned to her regardless of the
-   pool/cap, and leaves the pool entirely so it's never worked twice. There
-   are two payer lists to choose from:
+   whose `Payer` is on her payer list is assigned to her outright, and
+   leaves the shared pool entirely so it's never worked twice. There are
+   two payer lists to choose from:
 
 | Option | Payers |
 |--------|--------|
@@ -179,12 +188,13 @@ the carve-out is the same, and checking it runs the carve-out on its own
 whether or not the narrower box is also checked.
 
 - The service does not matter, only the claim type and the payer. IOP for
-  her carve-out payers is hers too: she takes it ahead of the IOP-to-Jasmine
-  rule. IOP for any other payer, or IOP that is not a Professional claim
-  type, is still Jasmine's.
-- Carve-out rows leave the Cathy/Jasmine professional pool rather than being
-  duplicated into it, so no row is worked twice. Her 150-row cap (or the
-  even split, if that's on) then applies to whatever is left of the pool.
+  her carve-out payers is hers too. IOP for any other payer, or IOP that is
+  not a Professional claim type, stays in the shared pool.
+- Carve-out rows leave the shared pool rather than being duplicated into
+  it, so no row is worked twice. The daily half-and-half split then applies
+  to whatever is left of the pool — so **with the carve-out on, Cathy ends
+  up with more than half overall** (her carve-out rows plus half of the
+  rest).
 - Payer matching is case-insensitive and tolerates the spelling variants these
   payers appear with: `ConnectiCare`/`Connecti Care`, `UBH`/`United
   Behavioral Health`, and the `(Optum)` suffixes (`Emblem (Optum)`,
@@ -200,33 +210,13 @@ whether or not the narrower box is also checked.
 ### Giving Cathy nothing (optional)
 
 When "Don't give Cathy anything" is turned on, Cathy is assigned no rows at
-all for that run — neither her payer carve-out nor her share of the
-professional pool — and no workbook is generated for her. Her share of the
-pool goes to **Jasmine** instead — the same thing that already happens on a
-weekend, when her cap is zero. Nothing is left unassigned: every row still
-appears in the Masters workbook with an owner, and the rules that never
-involved Cathy (Self Pay to CB, Melissa's rows) are untouched.
-
-### Overriding Cathy's cap (optional, no code change needed)
-
-"Override Cathy's cap for today" replaces the standard weekday schedule (150
-Monday-Friday, 0 on weekends) with an exact row count for this run only — for
-example, giving her 100 on a weekday she's out for part of, or opening up 20
-rows for her on a weekend. It's ignored if "Don't give Cathy anything" or
-"Split all services evenly between Jasmine and Cathy" is also checked. The
-command-line script takes the same option as `--cathy-cap N`.
-
-### Splitting services evenly (optional)
-
-"Split all services evenly between Jasmine and Cathy" replaces Cathy's cap
-entirely for the run: instead of her taking a fixed row count and Jasmine
-the remainder, **everything Jasmine would otherwise receive** is divided
-50/50 between the two — the rest of the professional pool, plus billable
-Programming/e-care, plus other billable non-Professional (institutional)
-Insurance rows, plus IOP. Cathy's payer carve-out, if also turned on, still
-claims its rows first, ahead of the split. It's ignored if "Don't give
-Cathy anything" is also checked (she still gets nothing). The command-line
-script takes the same option as `--even-split-jasmine-cathy`.
+all for that run — neither her payer carve-out nor her half of the shared
+pool — and no workbook is generated for her. **Jasmine** gets the whole
+pool instead. Nothing is left unassigned: every row still appears in the
+Masters workbook with an owner, and the rules that never involved Cathy
+(Self Pay to CB, Melissa's rows) are untouched. The Day A/Day B rotation
+keeps counting on days Cathy is skipped, so the next day's split is the
+same as if she hadn't been.
 
 ### Custom report (optional, no code change needed)
 
@@ -244,8 +234,8 @@ without a checkbox or a code change:
   restriction Cathy has: only CMS-1500/UB-04 rows for these payers are
   claimed). Uncheck to match any claim type.
 
-Like Cathy's carve-out, this report's rows leave the Cathy/Jasmine
-professional pool entirely (no row is worked twice), and it's checked *after*
+Like Cathy's carve-out, this report's rows leave the shared Cathy/Jasmine
+pool entirely (no row is worked twice), and it's checked *after*
 Cathy's carve-out, so if a payer is on both lists, Cathy's rows stay hers.
 The rules that outrank Cathy (WM/OP WM, PHP, the O'Flynn Karen rule, Self Pay
 to CB) outrank this report too. Its workbook gets the same Status dropdown as
@@ -260,8 +250,8 @@ the Professional-only restriction).
 ## Reports
 
 Individual workbooks are generated for **Cathy**, **Jasmine**, and **CB**
-(empty reports are skipped, e.g. Cathy on weekends, and Cathy's is not
-generated at all when "Don't give Cathy anything" is on), plus the
+(empty reports are skipped, and Cathy's is not generated at all when
+"Don't give Cathy anything" is on), plus the
 **custom report**'s staff member when that's configured. All other staff
 (Melissa, Unable to Bill, etc.) are still assigned in the Masters workbook
 but do not receive separate reports.
@@ -301,9 +291,9 @@ python "Unbilled Step 1.py" "path/to/file.xlsx" --include-programming --exclude-
 # Cathy's full payer list, and nothing for Cathy otherwise:
 python "Unbilled Step 1.py" "path/to/file.xlsx" --cathy-all-payers --no-cathy
 
-# Split everything else 50/50 between Jasmine and Cathy, and remove BCBS/Beacon
-# from the Residential and Detox divisions:
-python "Unbilled Step 1.py" "path/to/file.xlsx" --even-split-jasmine-cathy \
+# Force today's Jasmine/Cathy split to Day B, and remove BCBS/Beacon from the
+# Residential and Detox divisions:
+python "Unbilled Step 1.py" "path/to/file.xlsx" --split-day B \
     --exclude-payer-by-division-payers "BCBS, Beacon" \
     --exclude-payer-by-division-divisions "Residential, Detox"
 ```

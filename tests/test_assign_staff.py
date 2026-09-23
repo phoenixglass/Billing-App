@@ -1,7 +1,7 @@
 """
-End-to-end tests for assign_staff: the Cathy payer carve-out (both payer
-lists), Cathy's standing cap-based pool share (the role Rosanna used to
-hold), the even split between Jasmine and Cathy, "give Cathy nothing", the
+End-to-end tests for assign_staff: the daily half-and-half Jasmine/Cathy
+split and its Day A/Day B rotation, the Cathy payer carve-out (both payer
+lists), "give Cathy nothing", Insurance PHP always going to Melissa, the
 custom report (a second, generic Cathy-shaped slot), and the
 include_programming override, exercised against a real worksheet.
 
@@ -38,9 +38,11 @@ assign_staff = unbilled.assign_staff
 HEADERS = ["Staff/Status", "GROUPFLD1", "GROUPFLD2", "Service", "Payer",
            "Billing Provider", "Program Level", "Client", "Claim Type"]
 
-# MMDDYYYY tokens for the two days that matter to these tests.
-WEDNESDAY = "09022026"
-TUESDAY = "09012026"
+# MMDDYYYY tokens for the two days most of these tests use. 09/23/2026 is
+# the Day A anchor for the Jasmine/Cathy split, so 09/01/2026 (22 days
+# earlier) is Day A and 09/02/2026 (21 days earlier) is Day B.
+WEDNESDAY = "09022026"  # Day B
+TUESDAY = "09012026"    # Day A
 
 
 def _sheet(rows):
@@ -80,32 +82,158 @@ def _cathy_candidate_rows():
     ]
 
 
-def test_cathy_carveout_off_by_default():
-    """Without assign_cathy, IOP for her usual payers goes to Jasmine like any other."""
-    ws = _sheet([
-        ("Insurance", "IOP", "Oxford", "Iop, Ida", "CMS-1500"),
-    ])
-    assign_staff(ws, WEDNESDAY)
-    assert _staff_by_client(ws)["Iop, Ida"] == "Jasmine"
+def _assignments(ws):
+    """Column 1 (Staff/Status) for every data row, in sheet order."""
+    return [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
 
 
-def test_professional_pool_falls_to_cathy_by_default():
-    """Every Professional row falls to Cathy under her standing weekday cap,
-    the role Rosanna used to hold, whether or not her carve-out is on."""
-    ws = _sheet(_cathy_candidate_rows())
-    assign_staff(ws, WEDNESDAY)
+def _pool_rows(n, prefix="Pool", payer="Magellan", service="Individual Therapy"):
+    return [("Insurance", service, payer, f"{prefix}{i:04d}", "CMS-1500")
+            for i in range(n)]
+
+
+def test_day_a_jasmine_gets_a_to_m_and_cathy_gets_n_to_z():
+    """Day A: Jasmine takes the first (A-M) half of the sorted pool, Cathy the second."""
+    clients = ["Zeller, Zoe", "Adams, Ann", "Nolan, Ned", "Miller, Mia",
+               "Baker, Bob", "Young, Yan"]
+    rows = [("Insurance", "Individual Therapy", "Magellan", c, "CMS-1500")
+            for c in clients]
+    ws = _sheet(rows)
+    assert assign_staff(ws, "09232026") == "A"
     staff = _staff_by_client(ws)
 
-    for client in ("Adams, Ann", "Baker, Bob", "Carter, Cal", "Evans, Eve",
-                   "Frank, Fay"):
-        assert staff[client] == "Cathy", (client, staff[client])
+    for client in ("Adams, Ann", "Baker, Bob", "Miller, Mia"):
+        assert staff[client] == "Jasmine", client
+    for client in ("Nolan, Ned", "Young, Yan", "Zeller, Zoe"):
+        assert staff[client] == "Cathy", client
+
+
+def test_day_b_swaps_the_halves():
+    """Day B (the next day): Jasmine takes N-Z and Cathy takes A-M."""
+    clients = ["Zeller, Zoe", "Adams, Ann", "Nolan, Ned", "Miller, Mia",
+               "Baker, Bob", "Young, Yan"]
+    rows = [("Insurance", "Individual Therapy", "Magellan", c, "CMS-1500")
+            for c in clients]
+    ws = _sheet(rows)
+    assert assign_staff(ws, "09242026") == "B"
+    staff = _staff_by_client(ws)
+
+    for client in ("Adams, Ann", "Baker, Bob", "Miller, Mia"):
+        assert staff[client] == "Cathy", client
+    for client in ("Nolan, Ned", "Young, Yan", "Zeller, Zoe"):
+        assert staff[client] == "Jasmine", client
+
+
+def test_split_is_an_exact_half_even_when_letters_are_lopsided():
+    """The cut is at the pool's midpoint, not at the letter M, so the halves
+    stay equal even when most clients fall in A-M."""
+    rows = _pool_rows(8, prefix="Adams")
+    rows += _pool_rows(2, prefix="Young")
+    ws = _sheet(rows)
+    assign_staff(ws, "09232026")  # Day A
+    assignments = _assignments(ws)
+
+    assert assignments.count("Jasmine") == 5
+    assert assignments.count("Cathy") == 5
+    # The sheet is sorted by Client, so Jasmine's half is the top of it.
+    assert assignments[:5] == ["Jasmine"] * 5
+
+
+def test_odd_pool_gives_the_extra_row_to_the_second_half():
+    rows = _pool_rows(7)
+    ws = _sheet(rows)
+    assign_staff(ws, "09232026")  # Day A: second (N-Z) half is Cathy's
+    assignments = _assignments(ws)
+    assert assignments.count("Jasmine") == 3
+    assert assignments.count("Cathy") == 4
+
+
+def test_split_applies_on_weekends_too():
+    """Cathy gets her half on a Saturday and Sunday as well."""
+    rows = _pool_rows(50)
+    for token in ("09262026", "09272026"):  # Saturday, Sunday
+        ws = _sheet(rows)
+        assign_staff(ws, token)
+        assignments = _assignments(ws)
+        assert assignments.count("Cathy") == 25, token
+        assert assignments.count("Jasmine") == 25, token
+
+
+def test_split_day_can_be_forced_for_a_run():
+    rows = [("Insurance", "Individual Therapy", "Magellan", "Adams, Ann", "CMS-1500"),
+            ("Insurance", "Individual Therapy", "Magellan", "Zeller, Zoe", "CMS-1500")]
+
+    ws = _sheet(rows)
+    # 09/23/2026 is Day A on its own; force Day B instead.
+    assert assign_staff(ws, "09232026", split_day="b") == "B"
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] == "Cathy"
+    assert staff["Zeller, Zoe"] == "Jasmine"
+
+    ws = _sheet(rows)
+    try:
+        assign_staff(ws, "09232026", split_day="C")
+        assert False, "expected ValueError for split_day='C'"
+    except ValueError:
+        pass
+
+
+def test_split_covers_iop_programming_ecare_and_institutional_rows():
+    """Everything Jasmine or Cathy would get is in the shared pool, not just
+    Professional rows."""
+    rows = [
+        ("Insurance", "Telemed IOP", "Magellan", "Adams, Ann", "CMS-1500"),
+        ("Insurance", "IOP", "Magellan", "Baker, Bob", "837I"),
+        ("Insurance", "Detox Admission", "Magellan", "Carter, Cal", "837I"),
+        ("Insurance", "Residential Program", "Magellan", "Nolan, Ned", "837I"),
+        ("Insurance", "E-Care Individual", "Magellan", "Owens, Olu", "837I"),
+        ("Insurance", "Individual Therapy", "Magellan", "Price, Pam", "CMS-1500"),
+    ]
+    ws = _sheet(rows)
+    assign_staff(ws, TUESDAY)  # 09/01/2026: Tuesday, Day A
+    staff = _staff_by_client(ws)
+
+    for client in ("Adams, Ann", "Baker, Bob", "Carter, Cal"):
+        assert staff[client] == "Jasmine", client
+    for client in ("Nolan, Ned", "Owens, Olu", "Price, Pam"):
+        assert staff[client] == "Cathy", client
+
+
+def test_non_billable_rows_stay_out_of_the_split():
+    """Wednesday Detox/e-care (institutional) are Unable to Bill, not split."""
+    rows = [
+        ("Insurance", "Detox Admission", "Magellan", "Detox, Dan", "837I"),
+        ("Insurance", "E-Care Individual", "Magellan", "Ecare, Ed", "837I"),
+        ("Insurance", "Individual Therapy", "Magellan", "Adams, Ann", "CMS-1500"),
+        ("Insurance", "Individual Therapy", "Magellan", "Zeller, Zoe", "CMS-1500"),
+    ]
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)  # 09/02/2026: Day B
+    staff = _staff_by_client(ws)
+    assert staff["Detox, Dan"] == "Unable to Bill"
+    assert staff["Ecare, Ed"] == "Unable to Bill"
+    assert staff["Adams, Ann"] == "Cathy"
+    assert staff["Zeller, Zoe"] == "Jasmine"
+
+
+def test_cathy_carveout_off_by_default():
+    """Without assign_cathy, IOP for her usual payers joins the shared pool
+    like any other row instead of going to her outright."""
+    ws = _sheet([
+        ("Insurance", "IOP", "Oxford", "Adams, Ann", "CMS-1500"),
+        ("Insurance", "IOP", "Oxford", "Zeller, Zoe", "CMS-1500"),
+    ])
+    assign_staff(ws, "09232026")  # Day A
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] == "Jasmine"
+    assert staff["Zeller, Zoe"] == "Cathy"
 
 
 def test_cathy_takes_only_professional_rows_for_her_payers():
     """Oxford/ConnectiCare/UBH Professional rows go to Cathy via the carve-out;
-    others still reach her too, but via her standing pool cap instead."""
+    the rest are split with Jasmine as usual."""
     ws = _sheet(_cathy_candidate_rows())
-    assign_staff(ws, WEDNESDAY, assign_cathy=True)
+    assign_staff(ws, WEDNESDAY, assign_cathy=True)  # Day B
     staff = _staff_by_client(ws)
 
     assert staff["Adams, Ann"] == "Cathy"
@@ -115,22 +243,21 @@ def test_cathy_takes_only_professional_rows_for_her_payers():
     # 837I Oxford is not Professional, so the carve-out does not claim it;
     # on a Wednesday it is not billable either.
     assert staff["Diaz, Dee"] == "Unable to Bill"
-    # Professional rows for other payers still reach Cathy, but through her
-    # standing pool cap rather than the carve-out.
+    # Evans/Frank are the shared pool: Day B gives the first half to Cathy.
     assert staff["Evans, Eve"] == "Cathy"
-    assert staff["Frank, Fay"] == "Cathy"
+    assert staff["Frank, Fay"] == "Jasmine"
 
 
-def test_cathy_rows_leave_the_professional_pool():
+def test_cathy_rows_leave_the_shared_pool():
     """A row assigned to Cathy is not also given to Jasmine — no double counting."""
     ws = _sheet(_cathy_candidate_rows())
     assign_staff(ws, WEDNESDAY, assign_cathy=True)
 
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-    # 3 carve-out rows (Adams/Baker/Carter) plus 2 more that reach her via
-    # her standing pool cap (Evans/Frank); Diaz is a non-Professional,
-    # non-billable-Wednesday row, so it's Unable to Bill.
-    assert assignments.count("Cathy") == 5
+    assignments = _assignments(ws)
+    # 3 carve-out rows (Adams/Baker/Carter), then Evans/Frank split one
+    # each; Diaz is a non-Professional, non-billable-Wednesday row.
+    assert assignments.count("Cathy") == 4
+    assert assignments.count("Jasmine") == 1
     assert assignments.count("Unable to Bill") == 1
     # Six rows in, six rows out, each with exactly one owner.
     assert len(assignments) == 6
@@ -158,6 +285,38 @@ def test_higher_priority_rules_still_win_over_cathy():
     assert staff["Cathy, Cam"] == "Cathy"
 
 
+def test_all_insurance_php_goes_to_melissa():
+    """Every Insurance PHP row is Melissa's, whatever the payer, claim type,
+    day, or split — including one the O'Flynn Karen rule would otherwise
+    mark Unable to Bill."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(HEADERS)
+    ws.append(["", "OP NYC", "Insurance", "PHP", "Magellan", "O'Flynn, Karen",
+               "OP", "Php, Oflynn", "CMS-1500"])
+    ws.append(["", "OP Westchester", "Insurance", "Partial Hospitalization",
+               "Magellan", "Smith, John", "OP", "Php, Inst", "837I"])
+    ws.append(["", "OP Westchester", "Insurance", "PHP Day", "Oxford",
+               "Smith, John", "OP", "Php, Prof", "CMS-1500"])
+    # A non-PHP row from the same O'Flynn Karen/OP NYC combination is still
+    # Unable to Bill.
+    ws.append(["", "OP NYC", "Insurance", "Individual Therapy", "Magellan",
+               "O'Flynn, Karen", "OP", "Oflynn, Other", "CMS-1500"])
+
+    for token in ("09232026", "09242026"):  # Day A and Day B (Wed, Thu)
+        for kwargs in ({}, {"assign_cathy": True}, {"skip_cathy": True}):
+            wb2 = Workbook()
+            ws2 = wb2.active
+            for row in ws.iter_rows(values_only=True):
+                ws2.append(list(row))
+            assign_staff(ws2, token, **kwargs)
+            staff = _staff_by_client(ws2)
+            assert staff["Php, Oflynn"] == "Melissa", (token, kwargs)
+            assert staff["Php, Inst"] == "Melissa", (token, kwargs)
+            assert staff["Php, Prof"] == "Melissa", (token, kwargs)
+            assert staff["Oflynn, Other"] == "Unable to Bill", (token, kwargs)
+
+
 def test_cathy_takes_iop_for_her_payers():
     """Every Professional service for Cathy's payers is hers, IOP included."""
     ws = _sheet([
@@ -165,13 +324,13 @@ def test_cathy_takes_iop_for_her_payers():
         ("Insurance", "Telemed IOP", "ConnectiCare", "Iop, Ivan", "UB-04"),
         ("Insurance", "Detox Admission", "UBH", "Detox, Dora", "CMS-1500"),
         ("Insurance", "E-Care Individual", "Oxford", "Ecare, Ellis", "CMS-1500"),
-        # IOP for a payer Cathy does not cover is still Jasmine's.
+        # IOP for a payer Cathy does not cover goes to the shared pool.
         ("Insurance", "Telemed IOP", "Optum", "Iop, Otto", "CMS-1500"),
-        # IOP for one of her payers, but not a Professional claim type, is
-        # still Jasmine's.
+        # IOP for one of her payers, but not a Professional claim type, also
+        # goes to the shared pool.
         ("Insurance", "IOP", "Oxford", "Iop, Inst", "837I"),
     ])
-    assign_staff(ws, WEDNESDAY, assign_cathy=True)
+    assign_staff(ws, WEDNESDAY, assign_cathy=True)  # Day B
     staff = _staff_by_client(ws)
 
     assert staff["Iop, Ida"] == "Cathy"
@@ -180,13 +339,10 @@ def test_cathy_takes_iop_for_her_payers():
     assert staff["Detox, Dora"] == "Cathy"
     assert staff["Ecare, Ellis"] == "Cathy"
 
+    # The two pool rows split one each; Day B gives the first half
+    # ("Iop, Inst" sorts before "Iop, Otto") to Cathy.
+    assert staff["Iop, Inst"] == "Cathy"
     assert staff["Iop, Otto"] == "Jasmine"
-    assert staff["Iop, Inst"] == "Jasmine"
-
-    # Her rows are labelled "Cathy" in the Staff/Status column, so the
-    # Masters workbook names her as the owner too.
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-    assert assignments.count("Cathy") == 4
 
 
 def _cathy_all_payer_rows():
@@ -201,29 +357,24 @@ def _cathy_all_payer_rows():
 
 def test_cathy_all_payers_turns_the_carveout_on_by_itself():
     """cathy_all_payers alone runs the carve-out; assign_cathy is not needed."""
-    ws = _sheet([
-        ("Insurance", "IOP", "Emblem (Optum)", "Gold, Gil", "CMS-1500"),
-    ])
-    assign_staff(ws, WEDNESDAY, cathy_all_payers=True)
-    # IOP for Emblem only reaches Cathy ahead of the IOP-to-Jasmine rule if
-    # the carve-out (her full payer list) is active.
-    assert _staff_by_client(ws)["Gold, Gil"] == "Cathy"
+    ws = _sheet(_cathy_all_payer_rows())
+    assign_staff(ws, "09232026", cathy_all_payers=True)  # Day A
+    # Without the carve-out, Day A would give Gold/Hall to Jasmine.
+    assert set(_assignments(ws)) == {"Cathy"}
 
 
-def test_cathy_all_payers_rows_leave_the_professional_pool():
-    """Her wider payer list shrinks the pool her cap is applied to."""
-    rows = [("Insurance", "Individual Therapy", "Emblem (Optum)", f"Cathy{i:04d}",
-             "CMS-1500") for i in range(40)]
-    rows += [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-              "CMS-1500") for i in range(160)]
+def test_cathy_all_payers_rows_leave_the_shared_pool():
+    """Her wider payer list shrinks the pool the split is applied to."""
+    rows = _pool_rows(40, prefix="Cathy", payer="Emblem (Optum)")
+    rows += _pool_rows(160)
 
     ws = _sheet(rows)
     assign_staff(ws, WEDNESDAY, cathy_all_payers=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    assignments = _assignments(ws)
 
-    # 40 carve-out rows plus her 150-row cap on what's left in the pool.
-    assert assignments.count("Cathy") == 190
-    assert assignments.count("Jasmine") == 10
+    # 40 carve-out rows plus half of the 160 left in the pool.
+    assert assignments.count("Cathy") == 120
+    assert assignments.count("Jasmine") == 80
     # 200 rows in, 200 rows out, each with exactly one owner.
     assert len(assignments) == 200
     assert all(value for value in assignments)
@@ -231,27 +382,27 @@ def test_cathy_all_payers_rows_leave_the_professional_pool():
 
 def test_skip_cathy_gives_the_whole_pool_to_jasmine():
     """With skip_cathy, Cathy gets nothing and Jasmine takes the whole pool."""
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(200)]
+    rows = _pool_rows(200)
     rows.append(("Self Pay", "Individual Therapy", "Self Pay", "Self, Sam", "CMS-1500"))
 
-    # Without the option, Wednesday's cap gives Cathy her 150.
+    # Without the option, the pool is split in half.
     ws = _sheet(rows)
     assign_staff(ws, WEDNESDAY)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-    assert assignments.count("Cathy") == 150
-    assert assignments.count("Jasmine") == 50
+    assignments = _assignments(ws)
+    assert assignments.count("Cathy") == 100
+    assert assignments.count("Jasmine") == 100
 
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, skip_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    for token in ("09232026", "09242026"):  # both Day A and Day B
+        ws = _sheet(rows)
+        assign_staff(ws, token, skip_cathy=True)
+        assignments = _assignments(ws)
 
-    assert "Cathy" not in assignments
-    assert assignments.count("Jasmine") == 200
-    # Nothing is left unassigned, and Self Pay still goes to CB.
-    assert assignments.count("CB") == 1
-    assert len(assignments) == 201
-    assert all(value for value in assignments)
+        assert "Cathy" not in assignments
+        assert assignments.count("Jasmine") == 200
+        # Nothing is left unassigned, and Self Pay still goes to CB.
+        assert assignments.count("CB") == 1
+        assert len(assignments) == 201
+        assert all(value for value in assignments)
 
 
 def test_skip_cathy_also_disables_her_carveout():
@@ -264,7 +415,8 @@ def test_skip_cathy_also_disables_her_carveout():
 
 
 def test_programming_included_on_a_wednesday():
-    """include_programming makes Wednesday Detox/Residential billable to Jasmine."""
+    """include_programming makes Wednesday Detox/Residential billable, and
+    therefore part of the Jasmine/Cathy split."""
     rows = [
         ("Insurance", "Detox Admission", "Oxford", "Detox, Dan", "837I"),
         ("Insurance", "Residential Program", "Optum", "Res, Rita", "837I"),
@@ -278,9 +430,9 @@ def test_programming_included_on_a_wednesday():
     assert staff["Res, Rita"] == "Unable to Bill"
 
     ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, include_programming=True)
+    assign_staff(ws, WEDNESDAY, include_programming=True)  # Day B
     staff = _staff_by_client(ws)
-    assert staff["Detox, Dan"] == "Jasmine"
+    assert staff["Detox, Dan"] == "Cathy"
     assert staff["Res, Rita"] == "Jasmine"
     # e-care is untouched by the override: still Tuesday-only.
     assert staff["Ecare, Ed"] == "Unable to Bill"
@@ -288,7 +440,7 @@ def test_programming_included_on_a_wednesday():
     ws = _sheet(rows)
     assign_staff(ws, TUESDAY, include_programming=True)
     staff = _staff_by_client(ws)
-    assert staff["Ecare, Ed"] == "Jasmine"
+    assert staff["Ecare, Ed"] in ("Jasmine", "Cathy")
 
 
 def test_aetna_programming_still_goes_to_melissa():
@@ -304,19 +456,17 @@ def test_aetna_programming_still_goes_to_melissa():
     assert staff["Humana, Hal"] == "Melissa"
 
 
-def test_cathy_cap_applies_to_the_pool_left_after_her_carveout():
-    """Cathy's carve-out rows are removed before her 150-row cap is applied."""
-    rows = [("Insurance", "Individual Therapy", "Oxford", f"Cathy{i:04d}", "CMS-1500")
-            for i in range(40)]
-    rows += [("Insurance", "Individual Therapy", "Optum", f"Pool{i:04d}", "CMS-1500")
-             for i in range(160)]
+def test_split_applies_to_the_pool_left_after_her_carveout():
+    """Cathy's carve-out rows are removed before the pool is split in half."""
+    rows = _pool_rows(20, prefix="Carveout", payer="Oxford")
+    rows += _pool_rows(20)
 
     ws = _sheet(rows)
     assign_staff(ws, WEDNESDAY, assign_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    assignments = _assignments(ws)
 
-    # 40 carve-out rows plus her 150-row cap on what's left in the pool.
-    assert assignments.count("Cathy") == 190
+    # 20 carve-out rows plus half of the remaining 20-row pool.
+    assert assignments.count("Cathy") == 30
     assert assignments.count("Jasmine") == 10
 
 
@@ -346,145 +496,6 @@ def test_cathy_status_dropdown_matches_jasmine():
     assert jasmine == base + ["Batch Billings", "IOP"]
 
 
-def test_cathy_cap_override_replaces_standard_schedule():
-    """cathy_cap_override replaces the weekday schedule with an exact count."""
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(200)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, cathy_cap_override=75)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    assert assignments.count("Cathy") == 75
-    assert assignments.count("Jasmine") == 125
-
-
-def test_cathy_cap_override_can_open_a_weekend():
-    """The override also applies on a weekend, which otherwise caps Cathy at 0."""
-    saturday = "09052026"  # a Saturday
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(50)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, saturday)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-    assert "Cathy" not in assignments
-
-    ws = _sheet(rows)
-    assign_staff(ws, saturday, cathy_cap_override=20)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-    assert assignments.count("Cathy") == 20
-    assert assignments.count("Jasmine") == 30
-
-
-def test_cathy_cap_override_ignored_when_skip_cathy():
-    """skip_cathy wins over cathy_cap_override: Cathy still gets nothing."""
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(50)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, cathy_cap_override=20, skip_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    assert "Cathy" not in assignments
-    assert assignments.count("Jasmine") == 50
-
-
-def test_even_split_divides_the_professional_pool_in_half():
-    """even_split_jasmine_cathy replaces the cap with a 50/50 split of the pool."""
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(200)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, even_split_jasmine_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    assert assignments.count("Cathy") == 100
-    assert assignments.count("Jasmine") == 100
-
-
-def test_even_split_also_divides_jasmines_other_rows():
-    """The split covers billable e-care/Programming rows too, not just the pool."""
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(10)]
-    # Billable e-care (institutional) rows that would normally go straight
-    # to Jasmine; e-care bills on Tuesdays regardless of Claim Type.
-    rows += [("Insurance", "E-Care Individual", "Magellan", f"Ecare{i:04d}",
-              "837I") for i in range(10)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, TUESDAY, even_split_jasmine_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    assert assignments.count("Cathy") == 10
-    assert assignments.count("Jasmine") == 10
-    assert len(assignments) == 20
-
-
-def test_even_split_includes_iop():
-    """Unlike the standard schedule, the even split divides IOP rows too."""
-    rows = [("Insurance", "Telemed IOP", "Magellan", f"Iop{i:04d}", "CMS-1500")
-            for i in range(20)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, even_split_jasmine_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    assert assignments.count("Cathy") == 10
-    assert assignments.count("Jasmine") == 10
-
-
-def test_even_split_iop_still_goes_to_jasmine_without_the_option():
-    """Without even_split_jasmine_cathy, IOP is still always Jasmine's."""
-    ws = _sheet([
-        ("Insurance", "Telemed IOP", "Magellan", "Iop, Ida", "CMS-1500"),
-    ])
-    assign_staff(ws, WEDNESDAY)
-    assert _staff_by_client(ws)["Iop, Ida"] == "Jasmine"
-
-
-def test_even_split_ignored_when_skip_cathy():
-    """skip_cathy wins over even_split_jasmine_cathy: Cathy still gets nothing."""
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(50)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, even_split_jasmine_cathy=True, skip_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    assert "Cathy" not in assignments
-    assert assignments.count("Jasmine") == 50
-
-
-def test_even_split_replaces_cap_override():
-    """even_split_jasmine_cathy overrides cathy_cap_override for the run."""
-    rows = [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-             "CMS-1500") for i in range(50)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, even_split_jasmine_cathy=True, cathy_cap_override=5)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    assert assignments.count("Cathy") == 25
-    assert assignments.count("Jasmine") == 25
-
-
-def test_even_split_still_leaves_her_carveout_first():
-    """Her payer carve-out still claims its rows ahead of the even split."""
-    rows = [("Insurance", "Individual Therapy", "Oxford", f"Carveout{i:04d}",
-             "CMS-1500") for i in range(20)]
-    rows += [("Insurance", "Individual Therapy", "Magellan", f"Pool{i:04d}",
-              "CMS-1500") for i in range(20)]
-
-    ws = _sheet(rows)
-    assign_staff(ws, WEDNESDAY, assign_cathy=True, even_split_jasmine_cathy=True)
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
-
-    # 20 carve-out rows plus half of the remaining 20-row pool.
-    assert assignments.count("Cathy") == 30
-    assert assignments.count("Jasmine") == 10
-
-
 def test_custom_report_routes_matching_professional_payer_rows():
     """A custom report claims Professional rows for its payers, like a second Cathy."""
     ws = _sheet(_cathy_candidate_rows())
@@ -493,9 +504,10 @@ def test_custom_report_routes_matching_professional_payer_rows():
     staff = _staff_by_client(ws)
 
     assert staff["Evans, Eve"] == "Karen"  # Aetna, CMS-1500
-    # Optum wasn't in the custom report's payer list, so it stays Cathy's
-    # (her standing pool cap, not a carve-out).
-    assert staff["Frank, Fay"] == "Cathy"
+    # Optum wasn't in the custom report's payer list, so it stays in the
+    # Jasmine/Cathy pool (Adams, Baker | Carter, Frank on Day B).
+    assert staff["Frank, Fay"] == "Jasmine"
+    assert staff["Adams, Ann"] == "Cathy"
     # Oxford isn't in this custom report's payer list ("aetna"), so this row
     # is untouched by it either way; it's a non-Professional claim type
     # outside the daily schedule, so it's Unable to Bill regardless.
@@ -519,20 +531,18 @@ def test_custom_report_any_claim_type_when_professional_only_is_false():
 
 
 def test_custom_report_leaves_pool_for_cathy_and_jasmine():
-    """Custom report rows leave the professional pool entirely, same as Cathy's carve-out."""
-    rows = [("Insurance", "Individual Therapy", "Cigna", f"Karen{i:04d}", "CMS-1500")
-            for i in range(40)]
-    rows += [("Insurance", "Individual Therapy", "Optum", f"Pool{i:04d}", "CMS-1500")
-             for i in range(160)]
+    """Custom report rows leave the shared pool entirely, same as Cathy's carve-out."""
+    rows = _pool_rows(40, prefix="Karen", payer="Cigna")
+    rows += _pool_rows(160, payer="Optum")
 
     ws = _sheet(rows)
     assign_staff(ws, WEDNESDAY, custom_report_name="Karen",
                  custom_report_payer_terms=["cigna"])
-    assignments = [ws.cell(row, 1).value for row in range(2, ws.max_row + 1)]
+    assignments = _assignments(ws)
 
     assert assignments.count("Karen") == 40
-    assert assignments.count("Cathy") == 150
-    assert assignments.count("Jasmine") == 10
+    assert assignments.count("Cathy") == 80
+    assert assignments.count("Jasmine") == 80
 
 
 def test_custom_report_and_cathy_do_not_double_claim():
@@ -555,15 +565,17 @@ def test_custom_report_and_cathy_do_not_double_claim():
 
 def test_custom_report_inactive_without_both_name_and_payers():
     """Setting only the name or only the payer terms leaves the standard schedule in place."""
-    rows = [("Insurance", "Individual Therapy", "Cigna", "Adams, Ann", "CMS-1500")]
+    rows = [("Insurance", "Individual Therapy", "Cigna", "Adams, Ann", "CMS-1500"),
+            ("Insurance", "Individual Therapy", "Cigna", "Zeller, Zoe", "CMS-1500")]
 
     ws = _sheet(rows)
     assign_staff(ws, WEDNESDAY, custom_report_name="Karen")
-    assert _staff_by_client(ws)["Adams, Ann"] == "Cathy"
+    assert "Karen" not in _assignments(ws)
+    assert sorted(_assignments(ws)) == ["Cathy", "Jasmine"]
 
     ws = _sheet(rows)
     assign_staff(ws, WEDNESDAY, custom_report_payer_terms=["cigna"])
-    assert _staff_by_client(ws)["Adams, Ann"] == "Cathy"
+    assert sorted(_assignments(ws)) == ["Cathy", "Jasmine"]
 
 
 def test_validate_custom_report_name_rejects_reserved_names():

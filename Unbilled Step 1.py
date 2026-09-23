@@ -252,10 +252,10 @@ def export_staff_workbooks(wb, wb_path, date_token, exclude_aetna: bool = False,
 
 def main(workbook_path, include_programming: bool = False, exclude_aetna: bool = False,
          cathy_report: bool = False, cathy_all_payers: bool = False,
-         skip_cathy: bool = False, even_split_jasmine_cathy: bool = False,
+         skip_cathy: bool = False, split_day: str = None,
          exclude_payer_terms: list = None,
          exclude_service_terms: list = None, exclude_scope: list = None,
-         cathy_cap_override: int = None, custom_report_name: str = None,
+         custom_report_name: str = None,
          custom_report_payer_terms: list = None,
          custom_report_professional_only: bool = True,
          division_exclude_payer_terms: list = None,
@@ -269,26 +269,22 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
           of the weekday.
       exclude_aetna       - keep Aetna rows out of the individual workbooks.
       cathy_report        - route Professional Oxford/ConnectiCare/UBH rows
-          to Cathy on top of her standing share of the professional pool.
+          to Cathy on top of her half of the shared Jasmine/Cathy pool.
       cathy_all_payers    - run that carve-out against her full payer list
           (CATHY_ALL_PAYERS) instead of her usual three; turns the carve-out
           on by itself.
       skip_cathy          - give Cathy nothing at all: Jasmine takes the
-          whole professional pool and no workbook is saved for Cathy.
-      even_split_jasmine_cathy - instead of Cathy's cap and Jasmine taking
-          the remainder, split everything Jasmine would otherwise get
-          50/50 between Jasmine and Cathy for this run, IOP included.
-          Ignored if skip_cathy is set.
+          whole shared pool and no workbook is saved for Cathy.
+      split_day           - "A" or "B" (--split-day) to force that day's
+          Jasmine/Cathy split instead of deriving it from the file's date.
+          Day A: Jasmine gets the A-M half, Cathy the N-Z half; Day B:
+          the reverse.
       exclude_payer_terms/exclude_service_terms - free-text custom
           exclusions (--exclude-payers/--exclude-services): rows whose
           Payer/Service contains any of these terms are left out of the
           individual workbooks for this run only.
       exclude_scope       - staff names (--exclude-scope) the two custom
           exclusions apply to; empty/None applies them to everyone.
-      cathy_cap_override  - give Cathy exactly this many professional-pool
-          rows for this run instead of the standard weekday schedule
-          (--cathy-cap). Ignored if skip_cathy or even_split_jasmine_cathy
-          is set.
       custom_report_name/custom_report_payer_terms/
           custom_report_professional_only - a second, generic Cathy-shaped
           report (--custom-report-name/--custom-report-payers/
@@ -326,9 +322,7 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
     # Step 2-6: Assign staff
     assign_staff(ws, date_token, include_programming=include_programming,
                  assign_cathy=cathy_report, cathy_all_payers=cathy_all_payers,
-                 skip_cathy=skip_cathy,
-                 cathy_cap_override=cathy_cap_override,
-                 even_split_jasmine_cathy=even_split_jasmine_cathy,
+                 skip_cathy=skip_cathy, split_day=split_day,
                  custom_report_name=custom_report_name,
                  custom_report_payer_terms=custom_report_payer_terms,
                  custom_report_professional_only=custom_report_professional_only)
@@ -380,13 +374,14 @@ if __name__ == "__main__":
                              "itself; --cathy-report is not also needed.")
     parser.add_argument("--no-cathy", action="store_true", dest="skip_cathy",
                         help="Give Cathy nothing at all for this run: Jasmine takes "
-                             "the whole Professional pool and no workbook is saved "
+                             "the whole shared pool and no workbook is saved "
                              "for Cathy.")
-    parser.add_argument("--even-split-jasmine-cathy", action="store_true",
-                        help="Instead of Cathy's cap and Jasmine taking the "
-                             "remainder, split everything Jasmine would otherwise "
-                             "get 50/50 between Jasmine and Cathy for this run, "
-                             "IOP included. Ignored if --no-cathy is also set.")
+    parser.add_argument("--split-day", choices=["A", "B"], type=str.upper,
+                        default=None,
+                        help="Force the Jasmine/Cathy split for this run instead "
+                             "of deriving it from the file's date. Day A: Jasmine "
+                             "gets the A-M half, Cathy the N-Z half; Day B: the "
+                             "reverse.")
     parser.add_argument("--exclude-payers", default="",
                         help="Comma-separated payer terms (case-insensitive substring "
                              "match). Rows whose Payer contains any of these are left "
@@ -401,11 +396,6 @@ if __name__ == "__main__":
                         help="Comma-separated staff names limiting --exclude-payers/"
                              "--exclude-services to those staff's workbooks. Leave "
                              "unset to apply them to every individual workbook.")
-    parser.add_argument("--cathy-cap", type=int, default=None,
-                        help="Give Cathy exactly this many professional-pool rows "
-                             "for this run instead of the standard weekday schedule. "
-                             "Ignored if --no-cathy or --even-split-jasmine-cathy is "
-                             "also set.")
     parser.add_argument("--custom-report-name", default=None,
                         help="Staff name for a second, generic Cathy-shaped report: "
                              "with --custom-report-payers, every Insurance row whose "
@@ -443,11 +433,10 @@ if __name__ == "__main__":
              cathy_report=args.cathy_report,
              cathy_all_payers=args.cathy_all_payers,
              skip_cathy=args.skip_cathy,
-             even_split_jasmine_cathy=args.even_split_jasmine_cathy,
+             split_day=args.split_day,
              exclude_payer_terms=parse_terms(args.exclude_payers),
              exclude_service_terms=parse_terms(args.exclude_services),
              exclude_scope=parse_terms(args.exclude_scope),
-             cathy_cap_override=args.cathy_cap,
              custom_report_name=args.custom_report_name,
              custom_report_payer_terms=parse_terms(args.custom_report_payers),
              custom_report_professional_only=not args.custom_report_any_claim_type,

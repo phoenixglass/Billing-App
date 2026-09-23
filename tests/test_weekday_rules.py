@@ -18,16 +18,12 @@ Optional per-run overrides (off by default):
 - The Cathy report claims Professional rows for Oxford, ConnectiCare, and
   UBH (see is_cathy_payer), or for her full payer list when the "all of her
   payers" variant is on (see is_cathy_all_payer).
-- Giving Cathy nothing for a run drops her cap to zero, so Jasmine takes
-  the whole professional pool.
+- Giving Cathy nothing for a run gives Jasmine the whole shared pool.
 - Excluding Aetna keys off is_aetna_payer.
 
-Cathy/Jasmine split (Insurance rows only). Cathy fills the role Rosanna
-used to hold, on top of her own payer-specific carve-out:
-- Cathy's professional-service row cap by weekday: 150 rows Monday
-  through Friday.
-- Weekends have no cap for her (Jasmine gets the whole professional pool
-  those days).
+Cathy/Jasmine split (Insurance rows only): everything either would get is
+split exactly in half every day, alternating Day A (Jasmine A-M, Cathy
+N-Z) and Day B (the reverse) by calendar day — see split_day_for_date_token.
 """
 import sys
 from pathlib import Path
@@ -50,7 +46,8 @@ from billing_rules import (
     parse_terms,
     parse_weekday_from_token,
     payer_excluded_by_division,
-    CATHY_PROFESSIONAL_CAP,
+    split_day_for_date_token,
+    SPLIT_DAY_A_ANCHOR,
 )
 
 
@@ -229,17 +226,31 @@ def test_self_pay_every_service_every_day_no_exceptions():
         assert not is_non_billable_service_for_weekday('extended care', weekday, self_pay=True)
 
 
-def test_cathy_professional_cap_by_weekday():
-    """Cathy's professional cap: 150 rows Monday through Friday."""
-    assert CATHY_PROFESSIONAL_CAP[0] == 150  # Monday
-    assert CATHY_PROFESSIONAL_CAP[1] == 150  # Tuesday
-    assert CATHY_PROFESSIONAL_CAP[2] == 150  # Wednesday
-    assert CATHY_PROFESSIONAL_CAP[3] == 150  # Thursday
-    assert CATHY_PROFESSIONAL_CAP[4] == 150  # Friday
+def test_split_day_alternates_every_calendar_day():
+    """09/23/2026 is Day A; every calendar day after it flips, weekends included."""
+    assert SPLIT_DAY_A_ANCHOR.strftime("%m%d%Y") == "09232026"
+    expected = {
+        "09222026": "B",  # Tuesday
+        "09232026": "A",  # Wednesday (the anchor)
+        "09242026": "B",  # Thursday
+        "09252026": "A",  # Friday
+        "09262026": "B",  # Saturday
+        "09272026": "A",  # Sunday
+        "09282026": "B",  # Monday
+        "12312026": "B",  # across a month and year boundary...
+        "01012027": "A",  # ...still alternates
+    }
+    for token, day in expected.items():
+        assert split_day_for_date_token(token) == (day, False), token
 
-    # Weekends are intentionally absent -> cap of 0.
-    assert CATHY_PROFESSIONAL_CAP.get(5, 0) == 0
-    assert CATHY_PROFESSIONAL_CAP.get(6, 0) == 0
+
+def test_split_day_falls_back_to_today_for_a_bad_token():
+    day, did_fallback = split_day_for_date_token("notadate")
+    assert day in ("A", "B")
+    assert did_fallback is True
+    day, did_fallback = split_day_for_date_token(None)
+    assert day in ("A", "B")
+    assert did_fallback is True
 
 
 def test_payer_excluded_by_division():
@@ -463,8 +474,11 @@ if __name__ == '__main__':
     test_self_pay_every_service_every_day_no_exceptions()
     print("✓ test_self_pay_every_service_every_day_no_exceptions passed")
 
-    test_cathy_professional_cap_by_weekday()
-    print("✓ test_cathy_professional_cap_by_weekday passed")
+    test_split_day_alternates_every_calendar_day()
+    print("✓ test_split_day_alternates_every_calendar_day passed")
+
+    test_split_day_falls_back_to_today_for_a_bad_token()
+    print("✓ test_split_day_falls_back_to_today_for_a_bad_token passed")
 
     test_payer_excluded_by_division()
     print("✓ test_payer_excluded_by_division passed")
