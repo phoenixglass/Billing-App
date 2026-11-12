@@ -587,7 +587,7 @@ custom_report_payers_raw = st.text_input(
 )
 
 custom_report_professional_only = st.checkbox(
-    "Professional claim types only (CMS-1500/UB-04)",
+    "Professional claim types only (CMS-1500)",
     value=True,
     help=(
         "When checked (default), only Professional "

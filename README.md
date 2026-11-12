@@ -26,9 +26,11 @@ reach Cathy or Jasmine — they are marked Unable to Bill.
 exactly in half between them.** That "shared pool" is every Insurance row
 either of them would get:
 
-- **Professional** services (Claim Type `CMS-1500` or `UB-04` — UB-04
-  counts as Professional every day), which bill every day of the week —
-  except e-care, which is Tuesday-only whatever the Claim Type.
+- **Professional** services (Claim Type `CMS-1500`), which bill every
+  day of the week — except e-care, which is Tuesday-only whatever the
+  Claim Type. `UB-04` is **not** Professional: it's the paper version of
+  the `837I` (institutional) claim, so UB-04 and 837I rows follow the
+  same schedule below.
 - **IOP** (including Telemed IOP), which bills every day of the week.
 - **Day Treatment** (any service with "Day Treatment" in its name, e.g.
   "Telemed: Day Treatment Mass"), which is billed like IOP: every day of
@@ -37,12 +39,12 @@ either of them would get:
   Friday, and weekends; it is Unable to Bill on Monday and Wednesday.
 - **E-care**, which bills on Tuesdays only (regardless of Claim Type).
 
-Any other Insurance service on a claim type that isn't CMS-1500/UB-04
-(837I, Standard Invoice, or blank), such as Case Management or
+Any other Insurance service on a claim type that isn't CMS-1500
+(837I, UB-04, Standard Invoice, or blank), such as Case Management or
 Acupuncture on a Standard Invoice, is **Unable to Bill every day**: it
 isn't Professional, and it isn't one of the scheduled services above.
-The same service on a CMS-1500/UB-04 claim is Professional and bills
-every day.
+The same service on a CMS-1500 claim is Professional and bills every
+day.
 
 **PHP** (Partial Hospitalization) is not in the pool: Insurance PHP goes to
 **Melissa**, every day, except PHP the O'Flynn Karen rule marks Unable to
@@ -221,7 +223,7 @@ staff member (not Jasmine or Cathy) without a checkbox or a code change:
   match against the Payer column, same matching as the custom exclusion
   fields.
 - **Professional claim types only** — checked by default (only
-  CMS-1500/UB-04 rows for these payers are claimed). Uncheck to match any
+  CMS-1500 rows for these payers are claimed). Uncheck to match any
   claim type.
 
 This report's rows are taken out of the shared Cathy/Jasmine pool before the

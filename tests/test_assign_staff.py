@@ -73,7 +73,7 @@ def _staff_by_client(ws):
 def _mixed_payer_rows():
     return [
         ("Insurance", "Individual Therapy", "Oxford", "Adams, Ann", "CMS-1500"),
-        ("Insurance", "Individual Therapy", "ConnectiCare", "Baker, Bob", "UB-04"),
+        ("Insurance", "Individual Therapy", "ConnectiCare", "Baker, Bob", "CMS-1500"),
         ("Insurance", "Group Therapy", "UBH", "Carter, Cal", "CMS-1500"),
         # Not Professional, and not billable on a Wednesday.
         ("Insurance", "Individual Therapy", "Oxford", "Diaz, Dee", "837I"),
@@ -231,14 +231,14 @@ def test_day_treatment_is_split_every_day_like_iop():
 
 def test_ecare_is_tuesday_only_whatever_the_claim_type():
     """Insurance e-care reaches Jasmine/Cathy only on Tuesdays, on CMS-1500
-    and UB-04 claims as well as 837I. Other Professional rows still bill
-    every day, and Self Pay e-care still goes to CB every day."""
+    and UB-04 claims as well as 837I. Professional (CMS-1500) rows still
+    bill every day, and Self Pay e-care still goes to CB every day."""
     rows = [
         ("Insurance", "E-Care Check-in", "Cigna", "Adams, Ann", "CMS-1500"),
         ("Insurance", "E-Care Check-in", "Cigna", "Baker, Bob", "UB-04"),
         ("Insurance", "E-Care Check-in", "Cigna", "Carter, Cal", "837I"),
         ("Insurance", "Individual Therapy", "Cigna", "Nolan, Ned", "CMS-1500"),
-        ("Insurance", "Individual Therapy", "Cigna", "Owens, Olu", "UB-04"),
+        ("Insurance", "Individual Therapy", "Cigna", "Owens, Olu", "CMS-1500"),
         ("Self Pay", "E-Care Check-in", "Self Pay", "Selfpay, Sam", "CMS-1500"),
     ]
     ws = _sheet(rows)
@@ -337,6 +337,33 @@ def test_ecare_php_housing_is_ecare_and_owm_is_melissa():
     staff = _staff_by_client(ws)
     assert staff["Owm, Oli"] == "Melissa"
     assert staff["Php, Pat"] == "Jasmine"
+
+
+def test_ub04_follows_the_weekday_schedule_like_837i():
+    """UB-04 is the paper form of the 837I claim, so it follows the same
+    weekday schedule instead of billing every day like CMS-1500. IOP and
+    Day Treatment on UB-04 still bill every day."""
+    rows = [
+        ("Insurance", "IOP Canaan", "Cigna", "Adams, Ann", "UB-04"),
+        ("Insurance", "Telemed: Day Treatment Mass", "Cigna", "Baker, Bob", "UB-04"),
+        ("Insurance", "Detox", "Cigna", "Carter, Cal", "UB-04"),
+        ("Insurance", "Case Management", "Cigna", "Diaz, Dee", "UB-04"),
+        ("Insurance", "Case Management", "Cigna", "Evans, Eve", "CMS-1500"),
+    ]
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] in ("Jasmine", "Cathy")
+    assert staff["Baker, Bob"] in ("Jasmine", "Cathy")
+    assert staff["Carter, Cal"] == "Unable to Bill"  # Detox, not on Wednesday
+    assert staff["Diaz, Dee"] == "Unable to Bill"    # not a scheduled service
+    assert staff["Evans, Eve"] in ("Jasmine", "Cathy")  # CMS-1500 is Professional
+
+    ws = _sheet(rows)
+    assign_staff(ws, TUESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Carter, Cal"] in ("Jasmine", "Cathy")  # Detox bills Tuesdays
+    assert staff["Diaz, Dee"] == "Unable to Bill"
 
 
 def test_non_billable_rows_stay_out_of_the_split():

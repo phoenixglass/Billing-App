@@ -2,7 +2,7 @@
 Unit tests for the daily billing schedule helpers in billing_rules.py.
 
 Daily billing schedule:
-- Professional (Claim Type CMS-1500 or UB-04) services bill every day of
+- Professional (Claim Type CMS-1500) services bill every day of
   the week.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
@@ -168,7 +168,7 @@ def test_day_treatment_bills_every_day_like_iop():
 
 def test_ecare_is_tuesday_only_for_every_claim_type():
     """E-care bills on Tuesdays only, whatever the Claim Type: a Professional
-    (CMS-1500/UB-04) e-care row is Unable to Bill on every other day, the
+    (CMS-1500) e-care row is Unable to Bill on every other day, the
     same as an 837I one. Self Pay is still the one exception."""
     for weekday in range(7):
         expected_non_billable = weekday != 1
@@ -182,14 +182,16 @@ def test_ecare_is_tuesday_only_for_every_claim_type():
 
 
 def test_claim_type_professional():
-    """Claim Type CMS-1500 or UB-04 (case/whitespace-insensitive) is Professional."""
+    """Claim Type CMS-1500 (case/whitespace-insensitive) is Professional.
+    UB-04 is not: it's the paper form of the 837I institutional claim."""
     assert is_professional_claim_type('CMS-1500')
     assert is_professional_claim_type('cms-1500')
     assert is_professional_claim_type('  CMS-1500  ')
 
-    assert is_professional_claim_type('UB-04')
-    assert is_professional_claim_type('ub-04')
-    assert is_professional_claim_type('  UB-04  ')
+    assert not is_professional_claim_type('UB-04')
+    assert not is_professional_claim_type('ub-04')
+    assert not is_professional_claim_type('  UB-04  ')
+    assert not is_professional_claim_type('Standard Invoice')
 
     assert not is_professional_claim_type('837I')
     assert not is_professional_claim_type('')

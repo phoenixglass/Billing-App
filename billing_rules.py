@@ -2,13 +2,15 @@
 Helper functions to:
 - parse MMDDYYYY date tokens into weekday
 - determine whether a given service is non-billable for a given weekday
-- classify a "Claim Type" value as Professional (CMS-1500 or UB-04)
+- classify a "Claim Type" value as Professional (CMS-1500)
 
 Weekday mapping: 0=Monday, 1=Tuesday, ..., 6=Sunday
 
 Daily billing schedule:
-- Professional services (Claim Type "CMS-1500" or "UB-04" — UB-04 counts as
-  Professional every day of the week) bill every day of the week.
+- Professional services (Claim Type "CMS-1500") bill every day of the
+  week. UB-04 is NOT Professional: it is the paper form of the 837I
+  (institutional) claim, so UB-04 and 837I rows both follow the schedule
+  below.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
 - Day Treatment (e.g. "Telemed: Day Treatment Mass") is billed like IOP:
@@ -28,10 +30,10 @@ Self Pay ever goes to either of them, and PHP never reaches them since it
 goes to Melissa). Every day of the week, everything that
 goes to Cathy or Jasmine is split exactly in half between the two:
 - The "shared pool" is every Insurance row either of them would get:
-  Professional rows (Claim Type CMS-1500 or UB-04), IOP (including
-  Telemed IOP), Day Treatment, billable Programming/e-care, and any
-  other billable Insurance row whose Claim Type is not CMS-1500/UB-04 (i.e.
-  institutional/837I). It is sorted alphabetically by Client and cut
+  Professional rows (Claim Type CMS-1500), IOP (including Telemed
+  IOP), Day Treatment, and billable Programming/e-care. Any other
+  Insurance service on a non-Professional claim (837I, UB-04, Standard
+  Invoice, blank) is not billable. It is sorted alphabetically by Client and cut
   at its exact midpoint into a first (A-M side) and a second (N-Z side)
   half. With an odd row count the second half gets the one extra row.
 - The halves alternate daily between "Day A" and "Day B" (see
@@ -185,11 +187,15 @@ def bills_like_iop(service: str) -> bool:
 
 
 def is_professional_claim_type(claim_type: str) -> bool:
-    """Return True if the Claim Type column value is CMS-1500 or UB-04 (Professional).
+    """Return True if the Claim Type column value is CMS-1500 (Professional).
 
-    UB-04 counts as Professional every day of the week, alongside CMS-1500.
+    UB-04 is not Professional: it is the paper form of the 837I
+    (institutional) claim, so it follows the same weekday schedule as 837I.
+    (From 2026-07-28 until this change UB-04 was treated as Professional;
+    at the time of the change, UB-04 rows in the real reports were only
+    IOP, which bills every day either way.)
     """
-    return (claim_type or "").strip().upper() in ("CMS-1500", "UB-04")
+    return (claim_type or "").strip().upper() == "CMS-1500"
 
 
 def is_aetna_payer(payer: str) -> bool:
@@ -361,10 +367,9 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     - Every day of the week, everything that goes to Jasmine or Cathy is
       split exactly in half between them. The "shared pool" is every
       Insurance row either would get: Professional rows (Claim Type
-      CMS-1500 or UB-04, which bill every day), IOP (including Telemed IOP,
-      every day), billable Programming (Detox, Residential) or e-care for
-      that weekday, and any other billable Insurance row whose Claim Type
-      is not CMS-1500/UB-04 (i.e. institutional/837I). The pool is sorted
+      CMS-1500, which bill every day), IOP and Day Treatment (every day,
+      any claim type), and billable Programming (Detox, Residential) or
+      e-care for that weekday. The pool is sorted
       alphabetically by Client and cut at its exact midpoint — even if that
       falls in the middle of a letter, or between two rows for the same
       client. With an odd row count the second half gets the one extra row.
@@ -416,7 +421,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       custom_report_payer_terms are both set, every Insurance row whose
       Payer contains one of those terms is that staff's, ahead of the
       shared pool. custom_report_professional_only (default True)
-      restricts it to CMS-1500/UB-04 claim types; set it False to match
+      restricts it to the CMS-1500 claim type; set it False to match
       any claim type instead. The name must not collide with a reserved
       staff name (see RESERVED_STAFF_NAMES/validate_custom_report_name).
 
@@ -436,7 +441,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             terms (case-insensitive substring match) that route a row to
             custom_report_name.
         custom_report_professional_only: When True (default), the custom
-            report only claims Professional (CMS-1500/UB-04) rows. Set False to match any claim type.
+            report only claims Professional (CMS-1500) rows. Set False to match any claim type.
 
     Returns:
         The split day that was used for this run, "A" or "B".
@@ -729,7 +734,7 @@ def is_non_billable_service_for_weekday(
 
     - service: original service string (case-insensitive checks will be used)
     - weekday: 0=Monday .. 6=Sunday
-    - is_professional: True when the row's Claim Type is CMS-1500 or UB-04.
+    - is_professional: True when the row's Claim Type is CMS-1500.
       Professional rows bill every day of the week, except e-care, which is
       Tuesday-only whatever the Claim Type.
     - self_pay: when True, every service is billable every day, with no
@@ -746,12 +751,12 @@ def is_non_billable_service_for_weekday(
         return False
 
     # e-care is only billed on Tuesdays, whatever the Claim Type: this is
-    # checked before Professional so a CMS-1500/UB-04 e-care row doesn't
+    # checked before Professional so a CMS-1500 e-care row doesn't
     # bill every day.
     if _is_ecare(s):
         return weekday != 1
 
-    # Professional (CMS-1500 or UB-04) services bill every day of the week.
+    # Professional (CMS-1500) services bill every day of the week.
     if is_professional:
         return False
 

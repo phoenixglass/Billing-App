@@ -371,7 +371,7 @@ if __name__ == "__main__":
                              "match) for --custom-report-name.")
     parser.add_argument("--custom-report-any-claim-type", action="store_true",
                         help="By default the custom report only claims Professional "
-                             "(CMS-1500/UB-04) rows. Set this to match "
+                             "(CMS-1500) rows. Set this to match "
                              "any claim type instead.")
     parser.add_argument("--exclude-payer-by-division-payers", default="",
                         help="Comma-separated funding source (Payer) terms "
