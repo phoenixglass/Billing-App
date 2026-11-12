@@ -118,6 +118,13 @@ def test_is_php_service_variants():
     assert not is_php_service('IOP')
     assert not is_php_service('')
     assert not is_php_service(None)
+    # Real PHP service names from the report all count...
+    assert is_php_service('PHP: Virtual')
+    assert is_php_service('No Show: PHP Group')
+    assert is_php_service('PHP Census Tracking')
+    # ...but an e-care service that mentions PHP is e-care, not PHP.
+    assert not is_php_service('E-care PHP Housing')
+    assert _is_ecare('E-care PHP Housing')
 
 
 def test_is_iop_service_variants():

@@ -127,9 +127,24 @@ def _is_drug_screen(service: str) -> bool:
 
 
 def is_php_service(service: str) -> bool:
-    """Return True for PHP/Partial Hospitalization services (always Melissa's)."""
+    """Return True for PHP/Partial Hospitalization services (always Melissa's).
+
+    An e-care service is never PHP, even if its name mentions PHP (e.g.
+    "E-care PHP Housing"): it follows the e-care schedule (Tuesdays only)
+    instead of going to Melissa.
+    """
     s = (service or "").lower()
+    if _is_ecare(s):
+        return False
     return any(kw in s for kw in PHP_KEYWORDS)
+
+
+def is_withdrawal_management_service(service: str) -> bool:
+    """Return True for Withdrawal Management services by name, e.g.
+    "Outpatient Withdrawal Management (OWM Appeal)". These always go to
+    Melissa, the same as a WM/OP WM Program Level, whatever the row's
+    Program Level says."""
+    return "withdrawal management" in (service or "").lower()
 
 
 def _is_programming_service(service: str) -> bool:
@@ -494,8 +509,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
         staff = None
 
-        # WM / OP WM Program Level → Melissa
-        if 'program_level' in cols and is_wm_program_level(ws.cell(row, cols['program_level']).value):
+        # WM / OP WM Program Level, or a Withdrawal Management service
+        # (e.g. "Outpatient Withdrawal Management (OWM Appeal)") → Melissa
+        if (('program_level' in cols
+                and is_wm_program_level(ws.cell(row, cols['program_level']).value))
+                or is_withdrawal_management_service(service)):
             staff = "Melissa"
 
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"

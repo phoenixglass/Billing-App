@@ -99,11 +99,15 @@ The days run A, B, A, B, … so whoever had A-M one day has N-Z the next.
     all the remaining rows, which is as close to even as possible.
 
 The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
-'extended care' (case-insensitive).
+'extended care' (case-insensitive). An e-care service that also mentions PHP
+(e.g. "E-care PHP Housing") is e-care, not PHP: it follows the
+Tuesday-only e-care schedule instead of going to Melissa.
 
 **Melissa** and the O'Flynn Karen "Unable to Bill" rule take priority over the
 Cathy/Jasmine schedule above:
-- WM/OP WM Program Level rows always go to Melissa.
+- WM/OP WM Program Level rows always go to Melissa, and so does any
+  Withdrawal Management service (e.g. "Outpatient Withdrawal Management
+  (OWM Appeal)"), whatever its Program Level. (Self Pay still goes to CB.)
 - Insurance PHP/Partial Hospitalization rows go to Melissa (unless "Give
   PHP to Jasmine" is checked for the run), every day,
   whatever the payer or claim type — except O'Flynn Karen OP Chappaqua/OP

@@ -305,6 +305,40 @@ def test_php_to_jasmine_gives_insurance_php_to_jasmine_on_top_of_her_half():
     assert staff["Baker, Bob"] == "Jasmine"
 
 
+def test_ecare_php_housing_is_ecare_and_owm_is_melissa():
+    """"E-care PHP Housing" follows the e-care schedule (Jasmine/Cathy on
+    Tuesdays, Unable to Bill otherwise), not PHP. "Outpatient Withdrawal
+    Management (OWM Appeal)" always goes to Melissa, even with a non-WM
+    Program Level and a Professional claim; Self Pay still goes to CB."""
+    rows = [
+        ("Insurance", "E-care PHP Housing", "Cigna", "Adams, Ann", "837I"),
+        ("Insurance", "Outpatient Withdrawal Management (OWM Appeal)", "Cigna", "Owm, Oli", "CMS-1500"),
+        ("Self Pay", "Outpatient Withdrawal Management (OWM Appeal)", "Self Pay", "Selfpay, Sam", "CMS-1500"),
+        ("Insurance", "Partial Hospitalization", "Cigna", "Php, Pat", "837I"),
+        ("Insurance", "Individual Therapy", "Cigna", "Zeller, Zoe", "CMS-1500"),
+    ]
+    ws = _sheet(rows)  # Program Level "OP" on every row
+    assign_staff(ws, TUESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] in ("Jasmine", "Cathy")
+    assert staff["Owm, Oli"] == "Melissa"
+    assert staff["Selfpay, Sam"] == "CB"
+    assert staff["Php, Pat"] == "Melissa"
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] == "Unable to Bill"
+    assert staff["Owm, Oli"] == "Melissa"
+
+    # The PHP checkbox doesn't touch either: one is e-care, the other WM.
+    ws = _sheet(rows)
+    assign_staff(ws, TUESDAY, php_to_jasmine=True)
+    staff = _staff_by_client(ws)
+    assert staff["Owm, Oli"] == "Melissa"
+    assert staff["Php, Pat"] == "Jasmine"
+
+
 def test_non_billable_rows_stay_out_of_the_split():
     """Wednesday Detox/e-care (institutional) are Unable to Bill, not split."""
     rows = [
