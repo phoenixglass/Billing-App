@@ -159,6 +159,21 @@ def test_day_treatment_bills_every_day_like_iop():
             'Telemed: Day Treatment Mass', weekday), weekday
 
 
+def test_ecare_is_tuesday_only_for_every_claim_type():
+    """E-care bills on Tuesdays only, whatever the Claim Type: a Professional
+    (CMS-1500/UB-04) e-care row is Unable to Bill on every other day, the
+    same as an 837I one. Self Pay is still the one exception."""
+    for weekday in range(7):
+        expected_non_billable = weekday != 1
+        for is_professional in (True, False):
+            for service in ('e-care', 'E-CARE Housing Cost', 'E-Care Scholarship'):
+                assert is_non_billable_service_for_weekday(
+                    service, weekday, is_professional=is_professional
+                ) == expected_non_billable, (service, weekday, is_professional)
+        assert not is_non_billable_service_for_weekday(
+            'e-care', weekday, is_professional=True, self_pay=True)
+
+
 def test_claim_type_professional():
     """Claim Type CMS-1500 or UB-04 (case/whitespace-insensitive) is Professional."""
     assert is_professional_claim_type('CMS-1500')
@@ -179,8 +194,8 @@ def test_professional_bills_every_day():
     for weekday in range(7):
         assert not is_non_billable_service_for_weekday('Individual Therapy', weekday, is_professional=True)
         assert not is_non_billable_service_for_weekday('Detox', weekday, is_professional=True)
-        # Even e-care bills every day once it's flagged Professional.
-        assert not is_non_billable_service_for_weekday('e-care', weekday, is_professional=True)
+        # e-care is the exception: Tuesday-only even when Professional
+        # (see test_ecare_is_tuesday_only_for_every_claim_type).
 
 
 def test_monday_and_wednesday_programming_non_billable():
@@ -504,6 +519,9 @@ if __name__ == '__main__':
 
     test_day_treatment_bills_every_day_like_iop()
     print("✓ test_day_treatment_bills_every_day_like_iop passed")
+
+    test_ecare_is_tuesday_only_for_every_claim_type()
+    print("✓ test_ecare_is_tuesday_only_for_every_claim_type passed")
 
     test_matches_any_term()
     print("✓ test_matches_any_term passed")

@@ -534,13 +534,14 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             continue
 
         # Everything else billable is Jasmine's and Cathy's to share: IOP,
-        # Day Treatment and Professional rows bill every day;
-        # Programming/e-care/other institutional rows only when the weekday
-        # schedule allows.
-        if (not bills_like_iop(service)
-                and not is_professional_claim_type(claim_type)
-                and is_non_billable_service_for_weekday(
-                    service, weekday, include_programming=include_programming)):
+        # Day Treatment and Professional rows bill every day; e-care only on
+        # Tuesdays, whatever the Claim Type; Programming/other institutional
+        # rows only when the weekday schedule allows. The weekday function
+        # is the single place that schedule lives.
+        if is_non_billable_service_for_weekday(
+                service, weekday,
+                is_professional=is_professional_claim_type(claim_type),
+                include_programming=include_programming):
             fixed_staff[row] = "Unable to Bill"
             other_rows.append(row)
             continue
@@ -703,7 +704,8 @@ def is_non_billable_service_for_weekday(
     - service: original service string (case-insensitive checks will be used)
     - weekday: 0=Monday .. 6=Sunday
     - is_professional: True when the row's Claim Type is CMS-1500 or UB-04.
-      Professional rows bill every day of the week.
+      Professional rows bill every day of the week, except e-care, which is
+      Tuesday-only whatever the Claim Type.
     - self_pay: when True, every service is billable every day, with no
       exceptions (including e-care).
     - include_programming: one-off override. When True, Programming (Detox,
@@ -717,13 +719,15 @@ def is_non_billable_service_for_weekday(
     if self_pay:
         return False
 
-    # Professional (CMS-1500) services bill every day of the week.
-    if is_professional:
-        return False
-
-    # e-care is only billed on Tuesdays.
+    # e-care is only billed on Tuesdays, whatever the Claim Type: this is
+    # checked before Professional so a CMS-1500/UB-04 e-care row doesn't
+    # bill every day.
     if _is_ecare(s):
         return weekday != 1
+
+    # Professional (CMS-1500 or UB-04) services bill every day of the week.
+    if is_professional:
+        return False
 
     # IOP (including Telemed IOP) and Day Treatment bill every day of the week.
     if bills_like_iop(s):

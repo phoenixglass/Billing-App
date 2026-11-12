@@ -27,7 +27,8 @@ exactly in half between them.** That "shared pool" is every Insurance row
 either of them would get:
 
 - **Professional** services (Claim Type `CMS-1500` or `UB-04` — UB-04
-  counts as Professional every day), which bill every day of the week.
+  counts as Professional every day), which bill every day of the week —
+  except e-care, which is Tuesday-only whatever the Claim Type.
 - **IOP** (including Telemed IOP), which bills every day of the week.
 - **Day Treatment** (any service with "Day Treatment" in its name, e.g.
   "Telemed: Day Treatment Mass"), which is billed like IOP: every day of

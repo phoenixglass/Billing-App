@@ -229,6 +229,35 @@ def test_day_treatment_is_split_every_day_like_iop():
     assert staff["Zeller, Zoe"] == "Jasmine"
 
 
+def test_ecare_is_tuesday_only_whatever_the_claim_type():
+    """Insurance e-care reaches Jasmine/Cathy only on Tuesdays, on CMS-1500
+    and UB-04 claims as well as 837I. Other Professional rows still bill
+    every day, and Self Pay e-care still goes to CB every day."""
+    rows = [
+        ("Insurance", "E-Care Check-in", "Cigna", "Adams, Ann", "CMS-1500"),
+        ("Insurance", "E-Care Check-in", "Cigna", "Baker, Bob", "UB-04"),
+        ("Insurance", "E-Care Check-in", "Cigna", "Carter, Cal", "837I"),
+        ("Insurance", "Individual Therapy", "Cigna", "Nolan, Ned", "CMS-1500"),
+        ("Insurance", "Individual Therapy", "Cigna", "Owens, Olu", "UB-04"),
+        ("Self Pay", "E-Care Check-in", "Self Pay", "Selfpay, Sam", "CMS-1500"),
+    ]
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)
+    staff = _staff_by_client(ws)
+    for client in ("Adams, Ann", "Baker, Bob", "Carter, Cal"):
+        assert staff[client] == "Unable to Bill", client
+    for client in ("Nolan, Ned", "Owens, Olu"):
+        assert staff[client] in ("Jasmine", "Cathy"), client
+    assert staff["Selfpay, Sam"] == "CB"
+
+    ws = _sheet(rows)
+    assign_staff(ws, TUESDAY)
+    staff = _staff_by_client(ws)
+    for client in ("Adams, Ann", "Baker, Bob", "Carter, Cal", "Nolan, Ned", "Owens, Olu"):
+        assert staff[client] in ("Jasmine", "Cathy"), client
+    assert staff["Selfpay, Sam"] == "CB"
+
+
 def test_non_billable_rows_stay_out_of_the_split():
     """Wednesday Detox/e-care (institutional) are Unable to Bill, not split."""
     rows = [
