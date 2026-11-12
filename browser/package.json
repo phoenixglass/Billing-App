@@ -1,0 +1,12 @@
+{
+  "name": "billing-app-browser",
+  "private": true,
+  "description": "Offline, single-file browser version of the Billing App.",
+  "scripts": {
+    "build": "node build.js",
+    "compare": "cd .. && python browser/test/compare_with_python.py --seeds 8"
+  },
+  "devDependencies": {
+    "exceljs": "4.4.0"
+  }
+}
