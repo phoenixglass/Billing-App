@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Billing Processor</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; worker-src blob:">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --border: #d9dde5;
+    --accent: #2457c5; --accent-text: #ffffff; --ok-bg: #e7f5ec; --ok: #1d6b3a; --warn-bg: #fff6dc;
+    --warn: #7a5600; --err-bg: #fde8e8; --err: #9b1c1c; --info-bg: #e8f0fd; --info: #1e478f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --panel: #1d2128; --text: #e7eaf0; --muted: #a2aab8; --border: #333a45;
+      --accent: #6d9bff; --accent-text: #0d1117; --ok-bg: #16301f; --ok: #8fd6a8; --warn-bg: #352b10;
+      --warn: #f1cf72; --err-bg: #3a1717; --err: #f4a3a3; --info-bg: #172640; --info: #a9c4f5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 28px 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin: 14px 0; }
+  .panel h3 { font-size: 15px; margin: 0 0 10px; }
+  .local { display: flex; gap: 10px; align-items: flex-start; }
+  .drop { border: 2px dashed var(--border); border-radius: 10px; padding: 22px; text-align: center; }
+  .drop.over { border-color: var(--accent); background: var(--info-bg); }
+  .drop label.button { display: inline-block; }
+  #file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  #fileName { display: block; margin-top: 8px; color: var(--muted); word-break: break-all; }
+  .check { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
+  .check input { margin-top: 4px; width: 16px; height: 16px; flex: none; }
+  .hint { display: block; color: var(--muted); font-size: 13px; }
+  .field { margin: 10px 0; }
+  .field label { display: block; font-weight: 600; font-size: 14px; }
+  input[type=text], select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit; }
+  .inline { display: flex; flex-wrap: wrap; gap: 16px; }
+  .button { display: inline-block; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer;
+    background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; text-decoration: none; }
+  .button:disabled { opacity: .45; cursor: not-allowed; }
+  .button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); font-weight: 500; }
+  .downloads { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
+  .downloads .button { text-align: left; word-break: break-all; }
+  .note { border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .note.ok { background: var(--ok-bg); color: var(--ok); }
+  .note.warn { background: var(--warn-bg); color: var(--warn); }
+  .note.error { background: var(--err-bg); color: var(--err); }
+  .note.info { background: var(--info-bg); color: var(--info); }
+  .note.muted { color: var(--muted); padding: 0; font-size: 13px; }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
+  .metric { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .metric .label { color: var(--muted); font-size: 13px; }
+  .metric .value { font-size: 22px; font-weight: 600; }
+  .actions { margin: 18px 0 6px; }
+  @media (max-width: 560px) { .metrics { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Unbilled Billing Processor</h1>
+  <p class="sub">Choose your billing file and it's processed right here, on this computer.</p>
+
+  <div class="note info local"><span>&#128274;</span><span><strong>Everything happens on this computer.</strong>
+    This page works offline: your file is read by your browser and is never uploaded anywhere. The finished
+    reports are saved to your Downloads folder.</span></div>
+
+  <div class="panel">
+    <div class="drop" id="drop">
+      <label class="button" for="file">Choose an Excel file</label>
+      <input type="file" id="file" accept=".xlsx">
+      <span id="fileName">No file chosen</span>
+      <span class="hint">Must be .xlsx with the date in the filename as MMDDYYYY. You can also drag the file here.</span>
+    </div>
+  </div>
+
+  <p class="hint">Staff assignment follows the standard daily schedule automatically, based on the date in the
+    filename: Self Pay always bills every day to <strong>CB</strong>; for Insurance rows, everything that goes to
+    <strong>Jasmine</strong> and <strong>Cathy</strong> (Professional, IOP, Day Treatment, and billable
+    Programming/e-care rows) is sorted alphabetically by Client and split exactly in half, every day. The halves
+    alternate daily: on <strong>Day A</strong> Jasmine gets the A-M half and Cathy the N-Z half; on
+    <strong>Day B</strong> they swap. All Insurance PHP rows go to <strong>Melissa</strong> in the Masters report
+    (no individual report is generated for her).</p>
+
+  <div class="panel">
+    <h3>Exclusions</h3>
+    <label class="check"><input type="checkbox" id="excludeOptum"><span>Exclude Optum insurance
+      <span class="hint">Utox (drug screen) rows with Optum as the payer are left out of every individual workbook.</span></span></label>
+    <label class="check"><input type="checkbox" id="excludeBcbAnthemCt"><span>Exclude BCB Anthem CT for PHP, Residential, and Detox
+      <span class="hint">BCB Anthem CT rows for PHP, Residential, or Detox are left out of every individual workbook.</span></span></label>
+    <label class="check"><input type="checkbox" id="excludeAnthem"><span>Remove Anthem from Cathy and Jasmine reports
+      <span class="hint">Anthem rows are left out of Cathy's and Jasmine's workbooks. They stay in the Masters report.</span></span></label>
+    <label class="check"><input type="checkbox" id="excludeDetoxResidential"><span>Don't give anyone Detox or Residential
+      <span class="hint">Detox and Residential rows are left out of every individual workbook. They stay in the Masters report.</span></span></label>
+  </div>
+
+  <div class="panel">
+    <h3>One-off options for this run</h3>
+    <label class="check"><input type="checkbox" id="includeProgramming"><span>Include Programming (Detox/Residential) today
+      <span class="hint">Programming bills no matter what day it is, so it can be worked on a Monday or Wednesday. E-care is unaffected and stays Tuesday-only.</span></span></label>
+    <label class="check"><input type="checkbox" id="excludeAetna"><span>Exclude Aetna
+      <span class="hint">Every Aetna row is left out of every individual workbook. Aetna rows stay in the Masters report.</span></span></label>
+    <label class="check"><input type="checkbox" id="skipCathy"><span>Don't give Cathy anything
+      <span class="hint">Cathy gets no rows and no workbook; Jasmine gets the whole shared pool.</span></span></label>
+    <label class="check"><input type="checkbox" id="phpToJasmine"><span>Give PHP to Jasmine
+      <span class="hint">Insurance PHP goes to Jasmine instead of Melissa, on top of her half of the split. Self Pay PHP still goes to CB; O'Flynn Karen OP Chappaqua/OP NYC PHP stays Unable to Bill.</span></span></label>
+    <div class="field">
+      <label for="splitDay">Jasmine/Cathy split day</label>
+      <select id="splitDay">
+        <option value="">Automatic (from the date in the filename)</option>
+        <option value="A">Day A — Jasmine gets A-M, Cathy gets N-Z</option>
+        <option value="B">Day B — Jasmine gets N-Z, Cathy gets A-M</option>
+      </select>
+      <span class="hint">The split alternates every calendar day. Pick Day A or Day B only to override it for this run.</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Custom report (optional) — route a payer to a new staff member</h3>
+    <div class="field"><label for="customName">Staff name for this report (leave blank to skip)</label>
+      <input type="text" id="customName" autocomplete="off">
+      <span class="hint">Must not be Jasmine, CB, Melissa, Cathy, or Unable to Bill.</span></div>
+    <div class="field"><label for="customPayers">Payers for this report (comma-separated)</label>
+      <input type="text" id="customPayers" autocomplete="off" placeholder="e.g. Cigna, Humana"></div>
+    <label class="check"><input type="checkbox" id="customProfessionalOnly" checked><span>Professional claim types only (CMS-1500)
+      <span class="hint">When checked, only Professional rows for these payers go to this report.</span></span></label>
+  </div>
+
+  <div class="panel">
+    <h3>Custom exclusions for this run</h3>
+    <div class="field"><label for="excludePayers">Exclude payers containing (comma-separated, optional)</label>
+      <input type="text" id="excludePayers" autocomplete="off" placeholder="e.g. Cigna, Humana"></div>
+    <div class="field"><label for="excludeServices">Exclude services containing (comma-separated, optional)</label>
+      <input type="text" id="excludeServices" autocomplete="off" placeholder="e.g. Group Therapy"></div>
+    <div class="field"><label>Apply the two custom exclusions above only to these staff (optional)</label>
+      <div class="inline">
+        <label class="check"><input type="checkbox" id="scopeJasmine"><span>Jasmine</span></label>
+        <label class="check"><input type="checkbox" id="scopeCathy"><span>Cathy</span></label>
+        <label class="check"><input type="checkbox" id="scopeCB"><span>CB</span></label>
+      </div>
+      <span class="hint">Leave all unchecked to apply them to every workbook. If only one of Jasmine and Cathy is picked, the matching rows go to the other one, so their workbooks stay even.</span></div>
+  </div>
+
+  <div class="panel">
+    <h3>Remove a funding source by division (optional)</h3>
+    <div class="field"><label for="divisionPayers">Funding source(s) to remove — comma-separated</label>
+      <input type="text" id="divisionPayers" autocomplete="off" placeholder="e.g. BCBS, Beacon"></div>
+    <div class="field"><label for="divisionDivisions">Division(s) to remove it from — comma-separated</label>
+      <input type="text" id="divisionDivisions" autocomplete="off" placeholder="e.g. Residential, Detox, OP Wilton"></div>
+    <span class="hint">Every combination of the two lists is removed for this run. They stay in the Masters report.</span>
+  </div>
+
+  <div id="warnings"></div>
+  <div class="actions"><button class="button" id="process" type="button" disabled>Process file</button></div>
+  <div id="error"></div>
+  <div id="results"></div>
+</main>
+<script>/*EXCELJS*/</script>
+<script>/*CORE*/</script>
+<script>/*IO*/</script>
+<script>/*APP*/</script>
+</body>
+</html>
