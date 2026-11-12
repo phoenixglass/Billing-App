@@ -104,7 +104,8 @@ The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
 **Melissa** and the O'Flynn Karen "Unable to Bill" rule take priority over the
 Cathy/Jasmine schedule above:
 - WM/OP WM Program Level rows always go to Melissa.
-- Insurance PHP/Partial Hospitalization rows go to Melissa, every day,
+- Insurance PHP/Partial Hospitalization rows go to Melissa (unless "Give
+  PHP to Jasmine" is checked for the run), every day,
   whatever the payer or claim type — except O'Flynn Karen OP Chappaqua/OP
   NYC PHP, which stays Unable to Bill (below). She does not get an
   individual report — PHP rows are assigned to her in the Masters
@@ -129,6 +130,7 @@ schedule above. The command-line script takes the same options as flags.
 | Don't give anyone Detox or Residential | — | Detox/Residential rows are left out of every individual workbook. |
 | Include Programming (Detox/Residential) today | `--include-programming` | Programming bills regardless of the weekday, so it can be worked on a Monday or Wednesday. Billable Programming rows are split between Jasmine and Cathy as usual. E-care is unaffected and stays Tuesday-only. |
 | Exclude Aetna | `--exclude-aetna` | Every Aetna row is left out of the individual workbooks. |
+| Give PHP to Jasmine | `--php-to-jasmine` | Insurance PHP rows go to Jasmine's workbook instead of Melissa, on top of her half of the Jasmine/Cathy split (they don't count toward it). Self Pay PHP still goes to CB, O'Flynn Karen OP Chappaqua/OP NYC PHP stays Unable to Bill, and Melissa keeps her non-PHP rows (WM, Aetna/Humana Detox/Residential). |
 | Don't give Cathy anything | `--no-cathy` | Cathy is assigned no rows at all and gets no workbook; Jasmine gets the whole shared pool. |
 | Jasmine/Cathy split day (dropdown: Automatic / Day A / Day B) | `--split-day A` or `--split-day B` | Forces that day's split for this run instead of working it out from the filename's date. See "How the split works" above. |
 

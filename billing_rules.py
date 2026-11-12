@@ -331,7 +331,8 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
                  skip_cathy: bool = False, split_day: str = None,
                  exclusions: ReportExclusions = None,
                  custom_report_name: str = None, custom_report_payer_terms: list = None,
-                 custom_report_professional_only: bool = True):
+                 custom_report_professional_only: bool = True,
+                 php_to_jasmine: bool = False):
     """Assign staff names based on the standard daily billing rules.
 
     This is the single copy of the assignment engine: app.py (the Streamlit
@@ -387,6 +388,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       goes to Jasmine.
     - split_day: "A" or "B" to force that day's split for this run instead
       of deriving it from date_token.
+    - php_to_jasmine: Insurance PHP rows that would go to Melissa go to
+      Jasmine instead, on top of her half of the shared pool (they are not
+      counted in the split). Self Pay PHP still goes to CB, O'Flynn Karen
+      OP Chappaqua/OP NYC PHP stays Unable to Bill, and Melissa keeps
+      everything that isn't PHP (WM, Aetna/Humana Detox/Residential).
     - exclusions: the run's ReportExclusions, so the split can be counted
       in reportable rows (see above).
     - custom_report_name/custom_report_payer_terms/
@@ -509,9 +515,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
                 staff = "Melissa"
 
         # PHP/Partial Hospitalization always goes to Melissa, every day
-        # (after the O'Flynn Karen rule, whose PHP stays Unable to Bill).
+        # (after the O'Flynn Karen rule, whose PHP stays Unable to Bill) --
+        # unless php_to_jasmine is on for this run, in which case Insurance
+        # PHP goes to Jasmine instead, on top of her half of the split.
         if not staff and is_php_service(service):
-            staff = "Melissa"
+            staff = "Jasmine" if (php_to_jasmine and group == "Insurance") else "Melissa"
 
         if staff:
             fixed_staff[row] = staff

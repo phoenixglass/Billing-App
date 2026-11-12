@@ -217,6 +217,7 @@ def export_staff_workbooks(wb, wb_path, date_token, exclusions: ReportExclusions
 
 def main(workbook_path, include_programming: bool = False, exclude_aetna: bool = False,
          skip_cathy: bool = False, split_day: str = None,
+         php_to_jasmine: bool = False,
          exclude_payer_terms: list = None,
          exclude_service_terms: list = None, exclude_scope: list = None,
          custom_report_name: str = None,
@@ -234,6 +235,8 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
       exclude_aetna       - keep Aetna rows out of the individual workbooks.
       skip_cathy          - give Cathy nothing at all: Jasmine takes the
           whole shared pool and no workbook is saved for Cathy.
+      php_to_jasmine      - (--php-to-jasmine) Insurance PHP goes to
+          Jasmine instead of Melissa, on top of her half of the split.
       split_day           - "A" or "B" (--split-day) to force that day's
           Jasmine/Cathy split instead of deriving it from the file's date.
           Day A: Jasmine gets the A-M half, Cathy the N-Z half; Day B:
@@ -291,6 +294,7 @@ def main(workbook_path, include_programming: bool = False, exclude_aetna: bool =
     assign_staff(ws, date_token, include_programming=include_programming,
                  skip_cathy=skip_cathy, split_day=split_day,
                  exclusions=exclusions,
+                 php_to_jasmine=php_to_jasmine,
                  custom_report_name=custom_report_name,
                  custom_report_payer_terms=custom_report_payer_terms,
                  custom_report_professional_only=custom_report_professional_only)
@@ -330,6 +334,10 @@ if __name__ == "__main__":
                         help="Give Cathy nothing at all for this run: Jasmine takes "
                              "the whole shared pool and no workbook is saved "
                              "for Cathy.")
+    parser.add_argument("--php-to-jasmine", action="store_true",
+                        help="Give Insurance PHP rows to Jasmine instead of "
+                             "Melissa for this run, on top of her half of the "
+                             "Jasmine/Cathy split.")
     parser.add_argument("--split-day", choices=["A", "B"], type=str.upper,
                         default=None,
                         help="Force the Jasmine/Cathy split for this run instead "
@@ -388,6 +396,7 @@ if __name__ == "__main__":
              exclude_aetna=args.exclude_aetna,
              skip_cathy=args.skip_cathy,
              split_day=args.split_day,
+             php_to_jasmine=args.php_to_jasmine,
              exclude_payer_terms=parse_terms(args.exclude_payers),
              exclude_service_terms=parse_terms(args.exclude_services),
              exclude_scope=parse_terms(args.exclude_scope),

@@ -258,6 +258,53 @@ def test_ecare_is_tuesday_only_whatever_the_claim_type():
     assert staff["Selfpay, Sam"] == "CB"
 
 
+def test_php_to_jasmine_gives_insurance_php_to_jasmine_on_top_of_her_half():
+    """With php_to_jasmine, Insurance PHP goes to Jasmine on any day and
+    either split day, without counting toward the Jasmine/Cathy split.
+    Self Pay PHP, O'Flynn Karen OP NYC PHP and Melissa's non-PHP rows are
+    unaffected. Without the option, PHP still goes to Melissa."""
+    wb = Workbook()
+    ws_template_rows = [
+        # (GROUPFLD1, GROUPFLD2, Service, Payer, Billing Provider, Program Level, Client, Claim Type)
+        ("CA - PHP", "Insurance", "Partial Hospitalization", "Cigna", "Smith, John", "Ca-PHP", "Adams, Ann", "837I"),
+        ("CA - PHP", "Insurance", "PHP: Virtual", "Cigna", "Smith, John", "Ca-PHP", "Zeller, Zoe", "CMS-1500"),
+        ("CA - PHP", "Self Pay", "Partial Hospitalization", "Self Pay", "Smith, John", "Ca-PHP", "Selfpay, Sam", "837I"),
+        ("OP NYC", "Insurance", "PHP Day", "Cigna", "O'Flynn, Karen", "NYC-PHP", "Oflynn, Olu", "837I"),
+        ("Detox", "Insurance", "Detox Day", "Aetna", "Smith, John", "D-Detox", "Aetna, Al", "837I"),
+        ("OP NYC", "Insurance", "Outpatient 53+", "Cigna", "Smith, John", "NYC-OP WM", "Wm, Will", "CMS-1500"),
+        ("OP Wilton", "Insurance", "Outpatient 53+", "Cigna", "Smith, John", "W-OP", "Baker, Bob", "CMS-1500"),
+        ("OP Wilton", "Insurance", "Outpatient 53+", "Cigna", "Smith, John", "W-OP", "Young, Yan", "CMS-1500"),
+    ]
+
+    def run(date_token, **kwargs):
+        ws = Workbook().active
+        ws.append(HEADERS)
+        for fld1, fld2, service, payer, provider, level, client, claim in ws_template_rows:
+            ws.append(["", fld1, fld2, service, payer, provider, level, client, claim])
+        assign_staff(ws, date_token, **kwargs)
+        return _staff_by_client(ws)
+
+    for date_token in (TUESDAY, WEDNESDAY):  # Day A and Day B
+        staff = run(date_token, php_to_jasmine=True)
+        assert staff["Adams, Ann"] == "Jasmine", date_token
+        assert staff["Zeller, Zoe"] == "Jasmine", date_token
+        assert staff["Selfpay, Sam"] == "CB"
+        assert staff["Oflynn, Olu"] == "Unable to Bill"
+        assert staff["Aetna, Al"] == "Melissa"
+        assert staff["Wm, Will"] == "Melissa"
+        # The two regular rows are still split one each: PHP is on top.
+        assert {staff["Baker, Bob"], staff["Young, Yan"]} == {"Jasmine", "Cathy"}
+
+    staff = run(TUESDAY)
+    assert staff["Adams, Ann"] == "Melissa"
+    assert staff["Zeller, Zoe"] == "Melissa"
+
+    # Even with Cathy skipped, PHP is Jasmine's.
+    staff = run(WEDNESDAY, php_to_jasmine=True, skip_cathy=True)
+    assert staff["Adams, Ann"] == "Jasmine"
+    assert staff["Baker, Bob"] == "Jasmine"
+
+
 def test_non_billable_rows_stay_out_of_the_split():
     """Wednesday Detox/e-care (institutional) are Unable to Bill, not split."""
     rows = [
