@@ -199,6 +199,36 @@ def test_split_covers_iop_programming_ecare_and_institutional_rows():
         assert staff[client] == "Cathy", client
 
 
+def test_day_treatment_is_split_every_day_like_iop():
+    """837I Day Treatment goes into the Jasmine/Cathy split every day, like
+    IOP, instead of Unable to Bill. Wednesday is used because it's a day
+    Programming does not bill, so the control Detox row proves the weekday
+    schedule is still in force for everything else."""
+    rows = [
+        ("Insurance", "Telemed: Day Treatment Mass", "Surest (Optum)", "Adams, Ann", "837I"),
+        ("Insurance", "Individual Therapy", "Magellan", "Zeller, Zoe", "CMS-1500"),
+        ("Insurance", "Detox Admission", "Magellan", "Detox, Dan", "837I"),
+        ("Self Pay", "Telemed: Day Treatment Mass", "Self Pay", "Selfpay, Sam", "837I"),
+        ("", "Telemed: Day Treatment Mass", "BCBS - Mass CT", "Blank, Bea", "837I"),
+    ]
+    for day in ("09072026", TUESDAY, WEDNESDAY):  # Monday, Tuesday, Wednesday
+        ws = _sheet(rows)
+        assign_staff(ws, day)
+        staff = _staff_by_client(ws)
+        assert staff["Adams, Ann"] in ("Jasmine", "Cathy"), day
+        assert staff["Adams, Ann"] != staff["Zeller, Zoe"], day  # split in half
+        assert staff["Selfpay, Sam"] == "CB", day
+        # Only Insurance rows reach Jasmine/Cathy; that rule is unchanged.
+        assert staff["Blank, Bea"] == "Unable to Bill", day
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)  # Day B: Cathy has the first (A-M) half
+    staff = _staff_by_client(ws)
+    assert staff["Detox, Dan"] == "Unable to Bill"
+    assert staff["Adams, Ann"] == "Cathy"
+    assert staff["Zeller, Zoe"] == "Jasmine"
+
+
 def test_non_billable_rows_stay_out_of_the_split():
     """Wednesday Detox/e-care (institutional) are Unable to Bill, not split."""
     rows = [

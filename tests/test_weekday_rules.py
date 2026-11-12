@@ -6,6 +6,7 @@ Daily billing schedule:
   the week.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
+- Day Treatment is billed like IOP: every day of the week.
 - Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
   weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
@@ -34,6 +35,8 @@ from billing_rules import (
     _is_programming_service,
     is_aetna_payer,
     is_iop_service,
+    is_day_treatment_service,
+    bills_like_iop,
     is_non_billable_service_for_weekday,
     is_php_service,
     is_professional_claim_type,
@@ -129,6 +132,31 @@ def test_is_iop_service_variants():
     assert not is_iop_service('Residential')
     assert not is_iop_service('')
     assert not is_iop_service(None)
+
+
+def test_day_treatment_bills_every_day_like_iop():
+    """Day Treatment is billed like IOP: every weekday, even on an 837I claim.
+
+    Regression: "Telemed: Day Treatment Mass" on 837I matched none of the
+    schedule's categories and was Unable to Bill every day.
+    """
+    assert is_day_treatment_service('Telemed: Day Treatment Mass')
+    assert is_day_treatment_service('DAY TREATMENT')
+    assert is_day_treatment_service('M-Virtual Day Treatment')
+    assert not is_day_treatment_service('Treatment Plan Review')
+    assert not is_day_treatment_service('IOP')
+    assert not is_day_treatment_service('')
+    assert not is_day_treatment_service(None)
+
+    # IOP keeps meaning IOP; the every-day schedule covers both.
+    assert not is_iop_service('Telemed: Day Treatment Mass')
+    assert bills_like_iop('Telemed: Day Treatment Mass')
+    assert bills_like_iop('Telemed: IOP')
+    assert not bills_like_iop('Case Management')
+
+    for weekday in range(7):
+        assert not is_non_billable_service_for_weekday(
+            'Telemed: Day Treatment Mass', weekday), weekday
 
 
 def test_claim_type_professional():
@@ -473,6 +501,9 @@ if __name__ == '__main__':
 
     test_parse_terms()
     print("✓ test_parse_terms passed")
+
+    test_day_treatment_bills_every_day_like_iop()
+    print("✓ test_day_treatment_bills_every_day_like_iop passed")
 
     test_matches_any_term()
     print("✓ test_matches_any_term passed")

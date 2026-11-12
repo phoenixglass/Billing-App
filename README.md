@@ -29,11 +29,19 @@ either of them would get:
 - **Professional** services (Claim Type `CMS-1500` or `UB-04` — UB-04
   counts as Professional every day), which bill every day of the week.
 - **IOP** (including Telemed IOP), which bills every day of the week.
+- **Day Treatment** (any service with "Day Treatment" in its name, e.g.
+  "Telemed: Day Treatment Mass"), which is billed like IOP: every day of
+  the week, whatever the Claim Type.
 - **Programming** (Detox, Residential), which bills Tuesday, Thursday,
   Friday, and weekends; it is Unable to Bill on Monday and Wednesday.
 - **E-care**, which bills on Tuesdays only (regardless of Claim Type).
-- Any other billable Insurance row whose Claim Type is not CMS-1500/UB-04
-  (i.e. institutional/837I).
+
+Any other Insurance service on a claim type that isn't CMS-1500/UB-04
+(837I, Standard Invoice, or blank), such as Case Management or
+Acupuncture on a Standard Invoice, is **Unable to Bill every day**: it
+isn't Professional, and it isn't one of the scheduled services above.
+The same service on a CMS-1500/UB-04 claim is Professional and bills
+every day.
 
 **PHP** (Partial Hospitalization) is not in the pool: Insurance PHP goes to
 **Melissa**, every day, except PHP the O'Flynn Karen rule marks Unable to

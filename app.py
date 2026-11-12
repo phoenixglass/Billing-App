@@ -469,8 +469,8 @@ if uploaded_file is not None:
 st.markdown(
     "Staff assignment now follows the standard daily schedule automatically, based on "
     "the date in the filename: Self Pay always bills every day to **CB**; for Insurance "
-    "rows, everything that goes to **Jasmine** and **Cathy** (Professional, IOP, and "
-    "billable Programming/e-care/institutional rows) is sorted alphabetically by Client "
+    "rows, everything that goes to **Jasmine** and **Cathy** (Professional, IOP, Day "
+    "Treatment, and billable Programming/e-care rows) is sorted alphabetically by Client "
     "and split exactly in half, every day. The halves alternate daily: on **Day A** "
     "Jasmine gets the A-M half and Cathy the N-Z half; on **Day B** they swap. All "
     "Insurance PHP rows go to **Melissa** in the Masters report (no individual report "

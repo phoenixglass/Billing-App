@@ -11,6 +11,8 @@ Daily billing schedule:
   Professional every day of the week) bill every day of the week.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
+- Day Treatment (e.g. "Telemed: Day Treatment Mass") is billed like IOP:
+  every day of the week, whatever the Claim Type.
 - Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
   weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
@@ -27,8 +29,8 @@ goes to Melissa). Every day of the week, everything that
 goes to Cathy or Jasmine is split exactly in half between the two:
 - The "shared pool" is every Insurance row either of them would get:
   Professional rows (Claim Type CMS-1500 or UB-04), IOP (including
-  Telemed IOP), billable Programming/e-care, and any other billable
-  Insurance row whose Claim Type is not CMS-1500/UB-04 (i.e.
+  Telemed IOP), Day Treatment, billable Programming/e-care, and any
+  other billable Insurance row whose Claim Type is not CMS-1500/UB-04 (i.e.
   institutional/837I). It is sorted alphabetically by Client and cut
   at its exact midpoint into a first (A-M side) and a second (N-Z side)
   half. With an odd row count the second half gets the one extra row.
@@ -148,6 +150,23 @@ def _is_programming_service(service: str) -> bool:
 def is_iop_service(service: str) -> bool:
     """Return True for any IOP service, including Telemed IOP (case-insensitive)."""
     return "iop" in (service or "").lower()
+
+
+def is_day_treatment_service(service: str) -> bool:
+    """Return True for Day Treatment services (case-insensitive).
+
+    Day Treatment (e.g. "Telemed: Day Treatment Mass") is billed exactly
+    like IOP: every day of the week, whatever the Claim Type. Without this,
+    an 837I Day Treatment row matched none of the daily schedule's
+    categories and was Unable to Bill every day.
+    """
+    return "day treatment" in (service or "").lower()
+
+
+def bills_like_iop(service: str) -> bool:
+    """Return True for services billed on IOP's every-day schedule: IOP
+    (including Telemed IOP) and Day Treatment."""
+    return is_iop_service(service) or is_day_treatment_service(service)
 
 
 def is_professional_claim_type(claim_type: str) -> bool:
@@ -514,10 +533,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
-        # Everything else billable is Jasmine's and Cathy's to share: IOP
-        # and Professional rows bill every day; Programming/e-care/other
-        # institutional rows only when the weekday schedule allows.
-        if (not is_iop_service(service)
+        # Everything else billable is Jasmine's and Cathy's to share: IOP,
+        # Day Treatment and Professional rows bill every day;
+        # Programming/e-care/other institutional rows only when the weekday
+        # schedule allows.
+        if (not bills_like_iop(service)
                 and not is_professional_claim_type(claim_type)
                 and is_non_billable_service_for_weekday(
                     service, weekday, include_programming=include_programming)):
@@ -705,8 +725,8 @@ def is_non_billable_service_for_weekday(
     if _is_ecare(s):
         return weekday != 1
 
-    # IOP (including Telemed IOP) bills every day of the week.
-    if is_iop_service(s):
+    # IOP (including Telemed IOP) and Day Treatment bill every day of the week.
+    if bills_like_iop(s):
         return False
 
     # Programming (Detox, Residential) bills Tue/Thu/Fri + weekends, unless
