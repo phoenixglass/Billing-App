@@ -266,6 +266,7 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
                      include_programming: bool = False,
                      exclude_aetna: bool = False,
                      skip_cathy: bool = False,
+                     php_to_jasmine: bool = False,
                      split_day: str = None,
                      exclude_payer_terms: list = None,
                      exclude_service_terms: list = None,
@@ -352,6 +353,7 @@ def process_workbook(uploaded_file, exclude_optum: bool = False,
             skip_cathy=skip_cathy,
             split_day=split_day,
             exclusions=exclusions,
+            php_to_jasmine=php_to_jasmine,
             custom_report_name=custom_report_name,
             custom_report_payer_terms=custom_report_payer_terms,
             custom_report_professional_only=custom_report_professional_only)
@@ -469,8 +471,8 @@ if uploaded_file is not None:
 st.markdown(
     "Staff assignment now follows the standard daily schedule automatically, based on "
     "the date in the filename: Self Pay always bills every day to **CB**; for Insurance "
-    "rows, everything that goes to **Jasmine** and **Cathy** (Professional, IOP, and "
-    "billable Programming/e-care/institutional rows) is sorted alphabetically by Client "
+    "rows, everything that goes to **Jasmine** and **Cathy** (Professional, IOP, Day "
+    "Treatment, and billable Programming/e-care rows) is sorted alphabetically by Client "
     "and split exactly in half, every day. The halves alternate daily: on **Day A** "
     "Jasmine gets the A-M half and Cathy the N-Z half; on **Day B** they swap. All "
     "Insurance PHP rows go to **Melissa** in the Masters report (no individual report "
@@ -534,6 +536,18 @@ skip_cathy = st.checkbox(
     )
 )
 
+php_to_jasmine = st.checkbox(
+    "Give PHP to Jasmine",
+    value=False,
+    help=(
+        "When checked, Insurance PHP rows go to Jasmine's workbook instead of "
+        "Melissa, on top of her half of the Jasmine/Cathy split (they don't "
+        "count toward the split). Self Pay PHP still goes to CB, O'Flynn Karen "
+        "OP Chappaqua/OP NYC PHP stays Unable to Bill, and Melissa keeps "
+        "everything else (WM, Aetna/Humana Detox/Residential)."
+    )
+)
+
 SPLIT_DAY_CHOICES = {
     "Automatic (from the date in the filename)": None,
     "Day A — Jasmine gets A-M, Cathy gets N-Z": "A",
@@ -573,7 +587,7 @@ custom_report_payers_raw = st.text_input(
 )
 
 custom_report_professional_only = st.checkbox(
-    "Professional claim types only (CMS-1500/UB-04)",
+    "Professional claim types only (CMS-1500)",
     value=True,
     help=(
         "When checked (default), only Professional "
@@ -690,6 +704,7 @@ if uploaded_file is not None:
             include_programming=include_programming,
             exclude_aetna=exclude_aetna,
             skip_cathy=skip_cathy,
+            php_to_jasmine=php_to_jasmine,
             split_day=split_day,
             custom_report_name=custom_report_name.strip() if custom_report_name else None,
             custom_report_payer_terms=custom_report_payer_terms,
@@ -709,6 +724,9 @@ if uploaded_file is not None:
             )
 
         st.success("✓ Processing complete!")
+
+        if php_to_jasmine:
+            st.info("PHP: Insurance PHP rows went to **Jasmine** this run, not Melissa.")
 
         if skip_cathy:
             st.info(f"Split day: **Day {split_day_used}** — Cathy was skipped, so Jasmine has the whole shared pool.")

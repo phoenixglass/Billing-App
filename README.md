@@ -26,14 +26,25 @@ reach Cathy or Jasmine — they are marked Unable to Bill.
 exactly in half between them.** That "shared pool" is every Insurance row
 either of them would get:
 
-- **Professional** services (Claim Type `CMS-1500` or `UB-04` — UB-04
-  counts as Professional every day), which bill every day of the week.
+- **Professional** services (Claim Type `CMS-1500`), which bill every
+  day of the week — except e-care, which is Tuesday-only whatever the
+  Claim Type. `UB-04` is **not** Professional: it's the paper version of
+  the `837I` (institutional) claim, so UB-04 and 837I rows follow the
+  same schedule below.
 - **IOP** (including Telemed IOP), which bills every day of the week.
+- **Day Treatment** (any service with "Day Treatment" in its name, e.g.
+  "Telemed: Day Treatment Mass"), which is billed like IOP: every day of
+  the week, whatever the Claim Type.
 - **Programming** (Detox, Residential), which bills Tuesday, Thursday,
   Friday, and weekends; it is Unable to Bill on Monday and Wednesday.
 - **E-care**, which bills on Tuesdays only (regardless of Claim Type).
-- Any other billable Insurance row whose Claim Type is not CMS-1500/UB-04
-  (i.e. institutional/837I).
+
+Any other Insurance service on a claim type that isn't CMS-1500
+(837I, UB-04, Standard Invoice, or blank), such as Case Management or
+Acupuncture on a Standard Invoice, is **Unable to Bill every day**: it
+isn't Professional, and it isn't one of the scheduled services above.
+The same service on a CMS-1500 claim is Professional and bills every
+day.
 
 **PHP** (Partial Hospitalization) is not in the pool: Insurance PHP goes to
 **Melissa**, every day, except PHP the O'Flynn Karen rule marks Unable to
@@ -90,12 +101,17 @@ The days run A, B, A, B, … so whoever had A-M one day has N-Z the next.
     all the remaining rows, which is as close to even as possible.
 
 The system recognizes e-care variants 'e-care', 'e care', 'ecare', and
-'extended care' (case-insensitive).
+'extended care' (case-insensitive). An e-care service that also mentions PHP
+(e.g. "E-care PHP Housing") is e-care, not PHP: it follows the
+Tuesday-only e-care schedule instead of going to Melissa.
 
 **Melissa** and the O'Flynn Karen "Unable to Bill" rule take priority over the
 Cathy/Jasmine schedule above:
-- WM/OP WM Program Level rows always go to Melissa.
-- Insurance PHP/Partial Hospitalization rows go to Melissa, every day,
+- WM/OP WM Program Level rows always go to Melissa, and so does any
+  Withdrawal Management service (e.g. "Outpatient Withdrawal Management
+  (OWM Appeal)"), whatever its Program Level. (Self Pay still goes to CB.)
+- Insurance PHP/Partial Hospitalization rows go to Melissa (unless "Give
+  PHP to Jasmine" is checked for the run), every day,
   whatever the payer or claim type — except O'Flynn Karen OP Chappaqua/OP
   NYC PHP, which stays Unable to Bill (below). She does not get an
   individual report — PHP rows are assigned to her in the Masters
@@ -120,6 +136,7 @@ schedule above. The command-line script takes the same options as flags.
 | Don't give anyone Detox or Residential | — | Detox/Residential rows are left out of every individual workbook. |
 | Include Programming (Detox/Residential) today | `--include-programming` | Programming bills regardless of the weekday, so it can be worked on a Monday or Wednesday. Billable Programming rows are split between Jasmine and Cathy as usual. E-care is unaffected and stays Tuesday-only. |
 | Exclude Aetna | `--exclude-aetna` | Every Aetna row is left out of the individual workbooks. |
+| Give PHP to Jasmine | `--php-to-jasmine` | Insurance PHP rows go to Jasmine's workbook instead of Melissa, on top of her half of the Jasmine/Cathy split (they don't count toward it). Self Pay PHP still goes to CB, O'Flynn Karen OP Chappaqua/OP NYC PHP stays Unable to Bill, and Melissa keeps her non-PHP rows (WM, Aetna/Humana Detox/Residential). |
 | Don't give Cathy anything | `--no-cathy` | Cathy is assigned no rows at all and gets no workbook; Jasmine gets the whole shared pool. |
 | Jasmine/Cathy split day (dropdown: Automatic / Day A / Day B) | `--split-day A` or `--split-day B` | Forces that day's split for this run instead of working it out from the filename's date. See "How the split works" above. |
 
@@ -206,7 +223,7 @@ staff member (not Jasmine or Cathy) without a checkbox or a code change:
   match against the Payer column, same matching as the custom exclusion
   fields.
 - **Professional claim types only** — checked by default (only
-  CMS-1500/UB-04 rows for these payers are claimed). Uncheck to match any
+  CMS-1500 rows for these payers are claimed). Uncheck to match any
   claim type.
 
 This report's rows are taken out of the shared Cathy/Jasmine pool before the

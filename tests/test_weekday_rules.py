@@ -2,10 +2,11 @@
 Unit tests for the daily billing schedule helpers in billing_rules.py.
 
 Daily billing schedule:
-- Professional (Claim Type CMS-1500 or UB-04) services bill every day of
+- Professional (Claim Type CMS-1500) services bill every day of
   the week.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
+- Day Treatment is billed like IOP: every day of the week.
 - Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
   weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
@@ -34,6 +35,8 @@ from billing_rules import (
     _is_programming_service,
     is_aetna_payer,
     is_iop_service,
+    is_day_treatment_service,
+    bills_like_iop,
     is_non_billable_service_for_weekday,
     is_php_service,
     is_professional_claim_type,
@@ -115,6 +118,13 @@ def test_is_php_service_variants():
     assert not is_php_service('IOP')
     assert not is_php_service('')
     assert not is_php_service(None)
+    # Real PHP service names from the report all count...
+    assert is_php_service('PHP: Virtual')
+    assert is_php_service('No Show: PHP Group')
+    assert is_php_service('PHP Census Tracking')
+    # ...but an e-care service that mentions PHP is e-care, not PHP.
+    assert not is_php_service('E-care PHP Housing')
+    assert _is_ecare('E-care PHP Housing')
 
 
 def test_is_iop_service_variants():
@@ -131,15 +141,57 @@ def test_is_iop_service_variants():
     assert not is_iop_service(None)
 
 
+def test_day_treatment_bills_every_day_like_iop():
+    """Day Treatment is billed like IOP: every weekday, even on an 837I claim.
+
+    Regression: "Telemed: Day Treatment Mass" on 837I matched none of the
+    schedule's categories and was Unable to Bill every day.
+    """
+    assert is_day_treatment_service('Telemed: Day Treatment Mass')
+    assert is_day_treatment_service('DAY TREATMENT')
+    assert is_day_treatment_service('M-Virtual Day Treatment')
+    assert not is_day_treatment_service('Treatment Plan Review')
+    assert not is_day_treatment_service('IOP')
+    assert not is_day_treatment_service('')
+    assert not is_day_treatment_service(None)
+
+    # IOP keeps meaning IOP; the every-day schedule covers both.
+    assert not is_iop_service('Telemed: Day Treatment Mass')
+    assert bills_like_iop('Telemed: Day Treatment Mass')
+    assert bills_like_iop('Telemed: IOP')
+    assert not bills_like_iop('Case Management')
+
+    for weekday in range(7):
+        assert not is_non_billable_service_for_weekday(
+            'Telemed: Day Treatment Mass', weekday), weekday
+
+
+def test_ecare_is_tuesday_only_for_every_claim_type():
+    """E-care bills on Tuesdays only, whatever the Claim Type: a Professional
+    (CMS-1500) e-care row is Unable to Bill on every other day, the
+    same as an 837I one. Self Pay is still the one exception."""
+    for weekday in range(7):
+        expected_non_billable = weekday != 1
+        for is_professional in (True, False):
+            for service in ('e-care', 'E-CARE Housing Cost', 'E-Care Scholarship'):
+                assert is_non_billable_service_for_weekday(
+                    service, weekday, is_professional=is_professional
+                ) == expected_non_billable, (service, weekday, is_professional)
+        assert not is_non_billable_service_for_weekday(
+            'e-care', weekday, is_professional=True, self_pay=True)
+
+
 def test_claim_type_professional():
-    """Claim Type CMS-1500 or UB-04 (case/whitespace-insensitive) is Professional."""
+    """Claim Type CMS-1500 (case/whitespace-insensitive) is Professional.
+    UB-04 is not: it's the paper form of the 837I institutional claim."""
     assert is_professional_claim_type('CMS-1500')
     assert is_professional_claim_type('cms-1500')
     assert is_professional_claim_type('  CMS-1500  ')
 
-    assert is_professional_claim_type('UB-04')
-    assert is_professional_claim_type('ub-04')
-    assert is_professional_claim_type('  UB-04  ')
+    assert not is_professional_claim_type('UB-04')
+    assert not is_professional_claim_type('ub-04')
+    assert not is_professional_claim_type('  UB-04  ')
+    assert not is_professional_claim_type('Standard Invoice')
 
     assert not is_professional_claim_type('837I')
     assert not is_professional_claim_type('')
@@ -151,8 +203,8 @@ def test_professional_bills_every_day():
     for weekday in range(7):
         assert not is_non_billable_service_for_weekday('Individual Therapy', weekday, is_professional=True)
         assert not is_non_billable_service_for_weekday('Detox', weekday, is_professional=True)
-        # Even e-care bills every day once it's flagged Professional.
-        assert not is_non_billable_service_for_weekday('e-care', weekday, is_professional=True)
+        # e-care is the exception: Tuesday-only even when Professional
+        # (see test_ecare_is_tuesday_only_for_every_claim_type).
 
 
 def test_monday_and_wednesday_programming_non_billable():
@@ -473,6 +525,12 @@ if __name__ == '__main__':
 
     test_parse_terms()
     print("✓ test_parse_terms passed")
+
+    test_day_treatment_bills_every_day_like_iop()
+    print("✓ test_day_treatment_bills_every_day_like_iop passed")
+
+    test_ecare_is_tuesday_only_for_every_claim_type()
+    print("✓ test_ecare_is_tuesday_only_for_every_claim_type passed")
 
     test_matches_any_term()
     print("✓ test_matches_any_term passed")

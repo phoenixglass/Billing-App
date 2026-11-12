@@ -73,7 +73,7 @@ def _staff_by_client(ws):
 def _mixed_payer_rows():
     return [
         ("Insurance", "Individual Therapy", "Oxford", "Adams, Ann", "CMS-1500"),
-        ("Insurance", "Individual Therapy", "ConnectiCare", "Baker, Bob", "UB-04"),
+        ("Insurance", "Individual Therapy", "ConnectiCare", "Baker, Bob", "CMS-1500"),
         ("Insurance", "Group Therapy", "UBH", "Carter, Cal", "CMS-1500"),
         # Not Professional, and not billable on a Wednesday.
         ("Insurance", "Individual Therapy", "Oxford", "Diaz, Dee", "837I"),
@@ -197,6 +197,173 @@ def test_split_covers_iop_programming_ecare_and_institutional_rows():
         assert staff[client] == "Jasmine", client
     for client in ("Nolan, Ned", "Owens, Olu", "Price, Pam"):
         assert staff[client] == "Cathy", client
+
+
+def test_day_treatment_is_split_every_day_like_iop():
+    """837I Day Treatment goes into the Jasmine/Cathy split every day, like
+    IOP, instead of Unable to Bill. Wednesday is used because it's a day
+    Programming does not bill, so the control Detox row proves the weekday
+    schedule is still in force for everything else."""
+    rows = [
+        ("Insurance", "Telemed: Day Treatment Mass", "Surest (Optum)", "Adams, Ann", "837I"),
+        ("Insurance", "Individual Therapy", "Magellan", "Zeller, Zoe", "CMS-1500"),
+        ("Insurance", "Detox Admission", "Magellan", "Detox, Dan", "837I"),
+        ("Self Pay", "Telemed: Day Treatment Mass", "Self Pay", "Selfpay, Sam", "837I"),
+        ("", "Telemed: Day Treatment Mass", "BCBS - Mass CT", "Blank, Bea", "837I"),
+    ]
+    for day in ("09072026", TUESDAY, WEDNESDAY):  # Monday, Tuesday, Wednesday
+        ws = _sheet(rows)
+        assign_staff(ws, day)
+        staff = _staff_by_client(ws)
+        assert staff["Adams, Ann"] in ("Jasmine", "Cathy"), day
+        assert staff["Adams, Ann"] != staff["Zeller, Zoe"], day  # split in half
+        assert staff["Selfpay, Sam"] == "CB", day
+        # Only Insurance rows reach Jasmine/Cathy; that rule is unchanged.
+        assert staff["Blank, Bea"] == "Unable to Bill", day
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)  # Day B: Cathy has the first (A-M) half
+    staff = _staff_by_client(ws)
+    assert staff["Detox, Dan"] == "Unable to Bill"
+    assert staff["Adams, Ann"] == "Cathy"
+    assert staff["Zeller, Zoe"] == "Jasmine"
+
+
+def test_ecare_is_tuesday_only_whatever_the_claim_type():
+    """Insurance e-care reaches Jasmine/Cathy only on Tuesdays, on CMS-1500
+    and UB-04 claims as well as 837I. Professional (CMS-1500) rows still
+    bill every day, and Self Pay e-care still goes to CB every day."""
+    rows = [
+        ("Insurance", "E-Care Check-in", "Cigna", "Adams, Ann", "CMS-1500"),
+        ("Insurance", "E-Care Check-in", "Cigna", "Baker, Bob", "UB-04"),
+        ("Insurance", "E-Care Check-in", "Cigna", "Carter, Cal", "837I"),
+        ("Insurance", "Individual Therapy", "Cigna", "Nolan, Ned", "CMS-1500"),
+        ("Insurance", "Individual Therapy", "Cigna", "Owens, Olu", "CMS-1500"),
+        ("Self Pay", "E-Care Check-in", "Self Pay", "Selfpay, Sam", "CMS-1500"),
+    ]
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)
+    staff = _staff_by_client(ws)
+    for client in ("Adams, Ann", "Baker, Bob", "Carter, Cal"):
+        assert staff[client] == "Unable to Bill", client
+    for client in ("Nolan, Ned", "Owens, Olu"):
+        assert staff[client] in ("Jasmine", "Cathy"), client
+    assert staff["Selfpay, Sam"] == "CB"
+
+    ws = _sheet(rows)
+    assign_staff(ws, TUESDAY)
+    staff = _staff_by_client(ws)
+    for client in ("Adams, Ann", "Baker, Bob", "Carter, Cal", "Nolan, Ned", "Owens, Olu"):
+        assert staff[client] in ("Jasmine", "Cathy"), client
+    assert staff["Selfpay, Sam"] == "CB"
+
+
+def test_php_to_jasmine_gives_insurance_php_to_jasmine_on_top_of_her_half():
+    """With php_to_jasmine, Insurance PHP goes to Jasmine on any day and
+    either split day, without counting toward the Jasmine/Cathy split.
+    Self Pay PHP, O'Flynn Karen OP NYC PHP and Melissa's non-PHP rows are
+    unaffected. Without the option, PHP still goes to Melissa."""
+    wb = Workbook()
+    ws_template_rows = [
+        # (GROUPFLD1, GROUPFLD2, Service, Payer, Billing Provider, Program Level, Client, Claim Type)
+        ("CA - PHP", "Insurance", "Partial Hospitalization", "Cigna", "Smith, John", "Ca-PHP", "Adams, Ann", "837I"),
+        ("CA - PHP", "Insurance", "PHP: Virtual", "Cigna", "Smith, John", "Ca-PHP", "Zeller, Zoe", "CMS-1500"),
+        ("CA - PHP", "Self Pay", "Partial Hospitalization", "Self Pay", "Smith, John", "Ca-PHP", "Selfpay, Sam", "837I"),
+        ("OP NYC", "Insurance", "PHP Day", "Cigna", "O'Flynn, Karen", "NYC-PHP", "Oflynn, Olu", "837I"),
+        ("Detox", "Insurance", "Detox Day", "Aetna", "Smith, John", "D-Detox", "Aetna, Al", "837I"),
+        ("OP NYC", "Insurance", "Outpatient 53+", "Cigna", "Smith, John", "NYC-OP WM", "Wm, Will", "CMS-1500"),
+        ("OP Wilton", "Insurance", "Outpatient 53+", "Cigna", "Smith, John", "W-OP", "Baker, Bob", "CMS-1500"),
+        ("OP Wilton", "Insurance", "Outpatient 53+", "Cigna", "Smith, John", "W-OP", "Young, Yan", "CMS-1500"),
+    ]
+
+    def run(date_token, **kwargs):
+        ws = Workbook().active
+        ws.append(HEADERS)
+        for fld1, fld2, service, payer, provider, level, client, claim in ws_template_rows:
+            ws.append(["", fld1, fld2, service, payer, provider, level, client, claim])
+        assign_staff(ws, date_token, **kwargs)
+        return _staff_by_client(ws)
+
+    for date_token in (TUESDAY, WEDNESDAY):  # Day A and Day B
+        staff = run(date_token, php_to_jasmine=True)
+        assert staff["Adams, Ann"] == "Jasmine", date_token
+        assert staff["Zeller, Zoe"] == "Jasmine", date_token
+        assert staff["Selfpay, Sam"] == "CB"
+        assert staff["Oflynn, Olu"] == "Unable to Bill"
+        assert staff["Aetna, Al"] == "Melissa"
+        assert staff["Wm, Will"] == "Melissa"
+        # The two regular rows are still split one each: PHP is on top.
+        assert {staff["Baker, Bob"], staff["Young, Yan"]} == {"Jasmine", "Cathy"}
+
+    staff = run(TUESDAY)
+    assert staff["Adams, Ann"] == "Melissa"
+    assert staff["Zeller, Zoe"] == "Melissa"
+
+    # Even with Cathy skipped, PHP is Jasmine's.
+    staff = run(WEDNESDAY, php_to_jasmine=True, skip_cathy=True)
+    assert staff["Adams, Ann"] == "Jasmine"
+    assert staff["Baker, Bob"] == "Jasmine"
+
+
+def test_ecare_php_housing_is_ecare_and_owm_is_melissa():
+    """"E-care PHP Housing" follows the e-care schedule (Jasmine/Cathy on
+    Tuesdays, Unable to Bill otherwise), not PHP. "Outpatient Withdrawal
+    Management (OWM Appeal)" always goes to Melissa, even with a non-WM
+    Program Level and a Professional claim; Self Pay still goes to CB."""
+    rows = [
+        ("Insurance", "E-care PHP Housing", "Cigna", "Adams, Ann", "837I"),
+        ("Insurance", "Outpatient Withdrawal Management (OWM Appeal)", "Cigna", "Owm, Oli", "CMS-1500"),
+        ("Self Pay", "Outpatient Withdrawal Management (OWM Appeal)", "Self Pay", "Selfpay, Sam", "CMS-1500"),
+        ("Insurance", "Partial Hospitalization", "Cigna", "Php, Pat", "837I"),
+        ("Insurance", "Individual Therapy", "Cigna", "Zeller, Zoe", "CMS-1500"),
+    ]
+    ws = _sheet(rows)  # Program Level "OP" on every row
+    assign_staff(ws, TUESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] in ("Jasmine", "Cathy")
+    assert staff["Owm, Oli"] == "Melissa"
+    assert staff["Selfpay, Sam"] == "CB"
+    assert staff["Php, Pat"] == "Melissa"
+
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] == "Unable to Bill"
+    assert staff["Owm, Oli"] == "Melissa"
+
+    # The PHP checkbox doesn't touch either: one is e-care, the other WM.
+    ws = _sheet(rows)
+    assign_staff(ws, TUESDAY, php_to_jasmine=True)
+    staff = _staff_by_client(ws)
+    assert staff["Owm, Oli"] == "Melissa"
+    assert staff["Php, Pat"] == "Jasmine"
+
+
+def test_ub04_follows_the_weekday_schedule_like_837i():
+    """UB-04 is the paper form of the 837I claim, so it follows the same
+    weekday schedule instead of billing every day like CMS-1500. IOP and
+    Day Treatment on UB-04 still bill every day."""
+    rows = [
+        ("Insurance", "IOP Canaan", "Cigna", "Adams, Ann", "UB-04"),
+        ("Insurance", "Telemed: Day Treatment Mass", "Cigna", "Baker, Bob", "UB-04"),
+        ("Insurance", "Detox", "Cigna", "Carter, Cal", "UB-04"),
+        ("Insurance", "Case Management", "Cigna", "Diaz, Dee", "UB-04"),
+        ("Insurance", "Case Management", "Cigna", "Evans, Eve", "CMS-1500"),
+    ]
+    ws = _sheet(rows)
+    assign_staff(ws, WEDNESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Adams, Ann"] in ("Jasmine", "Cathy")
+    assert staff["Baker, Bob"] in ("Jasmine", "Cathy")
+    assert staff["Carter, Cal"] == "Unable to Bill"  # Detox, not on Wednesday
+    assert staff["Diaz, Dee"] == "Unable to Bill"    # not a scheduled service
+    assert staff["Evans, Eve"] in ("Jasmine", "Cathy")  # CMS-1500 is Professional
+
+    ws = _sheet(rows)
+    assign_staff(ws, TUESDAY)
+    staff = _staff_by_client(ws)
+    assert staff["Carter, Cal"] in ("Jasmine", "Cathy")  # Detox bills Tuesdays
+    assert staff["Diaz, Dee"] == "Unable to Bill"
 
 
 def test_non_billable_rows_stay_out_of_the_split():

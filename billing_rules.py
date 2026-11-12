@@ -2,15 +2,19 @@
 Helper functions to:
 - parse MMDDYYYY date tokens into weekday
 - determine whether a given service is non-billable for a given weekday
-- classify a "Claim Type" value as Professional (CMS-1500 or UB-04)
+- classify a "Claim Type" value as Professional (CMS-1500)
 
 Weekday mapping: 0=Monday, 1=Tuesday, ..., 6=Sunday
 
 Daily billing schedule:
-- Professional services (Claim Type "CMS-1500" or "UB-04" — UB-04 counts as
-  Professional every day of the week) bill every day of the week.
+- Professional services (Claim Type "CMS-1500") bill every day of the
+  week. UB-04 is NOT Professional: it is the paper form of the 837I
+  (institutional) claim, so UB-04 and 837I rows both follow the schedule
+  below.
 - IOP (including Telemed IOP) bills every day of the week, with no
   exceptions.
+- Day Treatment (e.g. "Telemed: Day Treatment Mass") is billed like IOP:
+  every day of the week, whatever the Claim Type.
 - Programming (Detox, Residential) bills Tuesday, Thursday, Friday, and
   weekends; non-billable Monday and Wednesday.
 - E-care bills on Tuesdays only, regardless of Claim Type.
@@ -26,10 +30,10 @@ Self Pay ever goes to either of them, and PHP never reaches them since it
 goes to Melissa). Every day of the week, everything that
 goes to Cathy or Jasmine is split exactly in half between the two:
 - The "shared pool" is every Insurance row either of them would get:
-  Professional rows (Claim Type CMS-1500 or UB-04), IOP (including
-  Telemed IOP), billable Programming/e-care, and any other billable
-  Insurance row whose Claim Type is not CMS-1500/UB-04 (i.e.
-  institutional/837I). It is sorted alphabetically by Client and cut
+  Professional rows (Claim Type CMS-1500), IOP (including Telemed
+  IOP), Day Treatment, and billable Programming/e-care. Any other
+  Insurance service on a non-Professional claim (837I, UB-04, Standard
+  Invoice, blank) is not billable. It is sorted alphabetically by Client and cut
   at its exact midpoint into a first (A-M side) and a second (N-Z side)
   half. With an odd row count the second half gets the one extra row.
 - The halves alternate daily between "Day A" and "Day B" (see
@@ -125,9 +129,24 @@ def _is_drug_screen(service: str) -> bool:
 
 
 def is_php_service(service: str) -> bool:
-    """Return True for PHP/Partial Hospitalization services (always Melissa's)."""
+    """Return True for PHP/Partial Hospitalization services (always Melissa's).
+
+    An e-care service is never PHP, even if its name mentions PHP (e.g.
+    "E-care PHP Housing"): it follows the e-care schedule (Tuesdays only)
+    instead of going to Melissa.
+    """
     s = (service or "").lower()
+    if _is_ecare(s):
+        return False
     return any(kw in s for kw in PHP_KEYWORDS)
+
+
+def is_withdrawal_management_service(service: str) -> bool:
+    """Return True for Withdrawal Management services by name, e.g.
+    "Outpatient Withdrawal Management (OWM Appeal)". These always go to
+    Melissa, the same as a WM/OP WM Program Level, whatever the row's
+    Program Level says."""
+    return "withdrawal management" in (service or "").lower()
 
 
 def _is_programming_service(service: str) -> bool:
@@ -150,12 +169,33 @@ def is_iop_service(service: str) -> bool:
     return "iop" in (service or "").lower()
 
 
-def is_professional_claim_type(claim_type: str) -> bool:
-    """Return True if the Claim Type column value is CMS-1500 or UB-04 (Professional).
+def is_day_treatment_service(service: str) -> bool:
+    """Return True for Day Treatment services (case-insensitive).
 
-    UB-04 counts as Professional every day of the week, alongside CMS-1500.
+    Day Treatment (e.g. "Telemed: Day Treatment Mass") is billed exactly
+    like IOP: every day of the week, whatever the Claim Type. Without this,
+    an 837I Day Treatment row matched none of the daily schedule's
+    categories and was Unable to Bill every day.
     """
-    return (claim_type or "").strip().upper() in ("CMS-1500", "UB-04")
+    return "day treatment" in (service or "").lower()
+
+
+def bills_like_iop(service: str) -> bool:
+    """Return True for services billed on IOP's every-day schedule: IOP
+    (including Telemed IOP) and Day Treatment."""
+    return is_iop_service(service) or is_day_treatment_service(service)
+
+
+def is_professional_claim_type(claim_type: str) -> bool:
+    """Return True if the Claim Type column value is CMS-1500 (Professional).
+
+    UB-04 is not Professional: it is the paper form of the 837I
+    (institutional) claim, so it follows the same weekday schedule as 837I.
+    (From 2026-07-28 until this change UB-04 was treated as Professional;
+    at the time of the change, UB-04 rows in the real reports were only
+    IOP, which bills every day either way.)
+    """
+    return (claim_type or "").strip().upper() == "CMS-1500"
 
 
 def is_aetna_payer(payer: str) -> bool:
@@ -312,7 +352,8 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
                  skip_cathy: bool = False, split_day: str = None,
                  exclusions: ReportExclusions = None,
                  custom_report_name: str = None, custom_report_payer_terms: list = None,
-                 custom_report_professional_only: bool = True):
+                 custom_report_professional_only: bool = True,
+                 php_to_jasmine: bool = False):
     """Assign staff names based on the standard daily billing rules.
 
     This is the single copy of the assignment engine: app.py (the Streamlit
@@ -326,10 +367,9 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
     - Every day of the week, everything that goes to Jasmine or Cathy is
       split exactly in half between them. The "shared pool" is every
       Insurance row either would get: Professional rows (Claim Type
-      CMS-1500 or UB-04, which bill every day), IOP (including Telemed IOP,
-      every day), billable Programming (Detox, Residential) or e-care for
-      that weekday, and any other billable Insurance row whose Claim Type
-      is not CMS-1500/UB-04 (i.e. institutional/837I). The pool is sorted
+      CMS-1500, which bill every day), IOP and Day Treatment (every day,
+      any claim type), and billable Programming (Detox, Residential) or
+      e-care for that weekday. The pool is sorted
       alphabetically by Client and cut at its exact midpoint — even if that
       falls in the middle of a letter, or between two rows for the same
       client. With an odd row count the second half gets the one extra row.
@@ -368,6 +408,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       goes to Jasmine.
     - split_day: "A" or "B" to force that day's split for this run instead
       of deriving it from date_token.
+    - php_to_jasmine: Insurance PHP rows that would go to Melissa go to
+      Jasmine instead, on top of her half of the shared pool (they are not
+      counted in the split). Self Pay PHP still goes to CB, O'Flynn Karen
+      OP Chappaqua/OP NYC PHP stays Unable to Bill, and Melissa keeps
+      everything that isn't PHP (WM, Aetna/Humana Detox/Residential).
     - exclusions: the run's ReportExclusions, so the split can be counted
       in reportable rows (see above).
     - custom_report_name/custom_report_payer_terms/
@@ -376,7 +421,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
       custom_report_payer_terms are both set, every Insurance row whose
       Payer contains one of those terms is that staff's, ahead of the
       shared pool. custom_report_professional_only (default True)
-      restricts it to CMS-1500/UB-04 claim types; set it False to match
+      restricts it to the CMS-1500 claim type; set it False to match
       any claim type instead. The name must not collide with a reserved
       staff name (see RESERVED_STAFF_NAMES/validate_custom_report_name).
 
@@ -396,7 +441,7 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             terms (case-insensitive substring match) that route a row to
             custom_report_name.
         custom_report_professional_only: When True (default), the custom
-            report only claims Professional (CMS-1500/UB-04) rows. Set False to match any claim type.
+            report only claims Professional (CMS-1500) rows. Set False to match any claim type.
 
     Returns:
         The split day that was used for this run, "A" or "B".
@@ -469,8 +514,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
 
         staff = None
 
-        # WM / OP WM Program Level → Melissa
-        if 'program_level' in cols and is_wm_program_level(ws.cell(row, cols['program_level']).value):
+        # WM / OP WM Program Level, or a Withdrawal Management service
+        # (e.g. "Outpatient Withdrawal Management (OWM Appeal)") → Melissa
+        if (('program_level' in cols
+                and is_wm_program_level(ws.cell(row, cols['program_level']).value))
+                or is_withdrawal_management_service(service)):
             staff = "Melissa"
 
         # Unable to Bill: Billing Provider = "O'Flynn, Karen" + GROUPFLD1 = "OP Chappaqua" or "OP NYC"
@@ -490,9 +538,11 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
                 staff = "Melissa"
 
         # PHP/Partial Hospitalization always goes to Melissa, every day
-        # (after the O'Flynn Karen rule, whose PHP stays Unable to Bill).
+        # (after the O'Flynn Karen rule, whose PHP stays Unable to Bill) --
+        # unless php_to_jasmine is on for this run, in which case Insurance
+        # PHP goes to Jasmine instead, on top of her half of the split.
         if not staff and is_php_service(service):
-            staff = "Melissa"
+            staff = "Jasmine" if (php_to_jasmine and group == "Insurance") else "Melissa"
 
         if staff:
             fixed_staff[row] = staff
@@ -514,13 +564,15 @@ def assign_staff(ws, date_token: str = None, include_programming: bool = False,
             other_rows.append(row)
             continue
 
-        # Everything else billable is Jasmine's and Cathy's to share: IOP
-        # and Professional rows bill every day; Programming/e-care/other
-        # institutional rows only when the weekday schedule allows.
-        if (not is_iop_service(service)
-                and not is_professional_claim_type(claim_type)
-                and is_non_billable_service_for_weekday(
-                    service, weekday, include_programming=include_programming)):
+        # Everything else billable is Jasmine's and Cathy's to share: IOP,
+        # Day Treatment and Professional rows bill every day; e-care only on
+        # Tuesdays, whatever the Claim Type; Programming/other institutional
+        # rows only when the weekday schedule allows. The weekday function
+        # is the single place that schedule lives.
+        if is_non_billable_service_for_weekday(
+                service, weekday,
+                is_professional=is_professional_claim_type(claim_type),
+                include_programming=include_programming):
             fixed_staff[row] = "Unable to Bill"
             other_rows.append(row)
             continue
@@ -682,8 +734,9 @@ def is_non_billable_service_for_weekday(
 
     - service: original service string (case-insensitive checks will be used)
     - weekday: 0=Monday .. 6=Sunday
-    - is_professional: True when the row's Claim Type is CMS-1500 or UB-04.
-      Professional rows bill every day of the week.
+    - is_professional: True when the row's Claim Type is CMS-1500.
+      Professional rows bill every day of the week, except e-care, which is
+      Tuesday-only whatever the Claim Type.
     - self_pay: when True, every service is billable every day, with no
       exceptions (including e-care).
     - include_programming: one-off override. When True, Programming (Detox,
@@ -697,16 +750,18 @@ def is_non_billable_service_for_weekday(
     if self_pay:
         return False
 
+    # e-care is only billed on Tuesdays, whatever the Claim Type: this is
+    # checked before Professional so a CMS-1500 e-care row doesn't
+    # bill every day.
+    if _is_ecare(s):
+        return weekday != 1
+
     # Professional (CMS-1500) services bill every day of the week.
     if is_professional:
         return False
 
-    # e-care is only billed on Tuesdays.
-    if _is_ecare(s):
-        return weekday != 1
-
-    # IOP (including Telemed IOP) bills every day of the week.
-    if is_iop_service(s):
+    # IOP (including Telemed IOP) and Day Treatment bill every day of the week.
+    if bills_like_iop(s):
         return False
 
     # Programming (Detox, Residential) bills Tue/Thu/Fri + weekends, unless
