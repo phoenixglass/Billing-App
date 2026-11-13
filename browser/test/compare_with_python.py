@@ -117,6 +117,45 @@ def random_report(path, seed, n, report_date):
     wb.save(path)
 
 
+PREFIXES = {  # namespace -> a non-standard prefix, as some exporters write them
+    "http://schemas.openxmlformats.org/spreadsheetml/2006/main": "x",
+    "http://schemas.openxmlformats.org/package/2006/relationships": "pr",
+    "http://schemas.openxmlformats.org/package/2006/content-types": "ct",
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships": "rel",
+    "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties": "ep",
+    "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes": "vtp",
+    "http://schemas.openxmlformats.org/package/2006/metadata/core-properties": "cpp",
+    "http://purl.org/dc/elements/1.1/": "dce",
+    "http://purl.org/dc/terms/": "dct",
+    "http://purl.org/dc/dcmitype/": "dcmi",
+    "http://www.w3.org/2001/XMLSchema-instance": "xsi2",
+}
+CORE_PROPS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+
+
+def prefixed_copy(src, dst):
+    """Re-save every XML part with different namespace prefixes (<x:workbook>,
+    rel:id, dce:creator, ...; docProps/core.xml the other way round, with its
+    namespace as the default), and xl/workbook.xml first in the zip. Same
+    workbook, different spelling: Excel and openpyxl read it unchanged;
+    ExcelJS needs xml-namespaces.js to."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+    for uri, prefix in PREFIXES.items():
+        ET.register_namespace(prefix, uri)
+    with zipfile.ZipFile(src) as zin:
+        items = sorted(zin.infolist(), key=lambda i: i.filename != "xl/workbook.xml")
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+            for info in items:
+                data = zin.read(info.filename)
+                if info.filename.endswith((".xml", ".rels")) and "/theme/" not in info.filename:
+                    default = CORE_PROPS if info.filename == "docProps/core.xml" else None
+                    data = ET.tostring(ET.fromstring(data), encoding="utf-8", xml_declaration=True,
+                                       default_namespace=default)
+                    assert (b"xmlns=" in data) == bool(default), info.filename
+                zout.writestr(info.filename, data)
+
+
 def load_python_app():
     home = Path(tempfile.mkdtemp())
     (home / ".streamlit").mkdir()
@@ -210,6 +249,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--demo", help="folder with the DEMO Unbilled Revenue *.xlsx files")
     ap.add_argument("--seeds", type=int, default=8)
+    ap.add_argument("--prefixed-seeds", type=int, default=2,
+                    help="also run this many inputs re-saved with namespace-prefixed XML")
     args = ap.parse_args()
 
     work = Path(tempfile.mkdtemp())
@@ -224,6 +265,11 @@ def main():
         p.parent.mkdir()
         random_report(p, seed, 160, d)
         inputs.append((p, name))
+        if seed < args.prefixed_seeds:
+            q = work / f"in_{seed}_prefixed" / name
+            q.parent.mkdir()
+            prefixed_copy(p, q)
+            inputs.append((q, name))
 
     app = load_python_app()
     cases = failures = rows_checked = 0
@@ -252,7 +298,8 @@ def main():
                         rows_checked += openpyxl.load_workbook(io.BytesIO(buf.getvalue())).worksheets[0].max_row - 1
             status = "ok" if not problems else "MISMATCH"
             failures += bool(problems)
-            print(f"{status:8} {name[-13:-5]} {json.dumps(js_opts)[:90]}")
+            tag = " prefixed" if path.parent.name.endswith("_prefixed") else ""
+            print(f"{status:8} {name[-13:-5]}{tag} {json.dumps(js_opts)[:80]}")
             for p in problems[:4]:
                 print("         ", p)
     print(f"\n{cases} cases, {rows_checked} output rows compared, {failures} with differences")

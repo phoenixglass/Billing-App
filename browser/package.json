@@ -7,6 +7,7 @@
     "compare": "cd .. && python browser/test/compare_with_python.py --seeds 8"
   },
   "devDependencies": {
-    "exceljs": "4.4.0"
+    "exceljs": "4.4.0",
+    "jszip": "3.10.1"
   }
 }

@@ -2,7 +2,7 @@
 /*
  * Build the single-file app: browser/dist/Billing App.html
  *
- * Inlines ExcelJS and the three source files into the HTML template, so the
+ * Inlines ExcelJS, JSZip and the source files into the HTML template, so the
  * result is one file that works offline with nothing to install. Run
  * `npm install` once, then `npm run build`.
  */
@@ -16,6 +16,8 @@ const safe = (js) => js.replace(/<\/script/gi, "<\\/script");
 
 const parts = {
   "/*EXCELJS*/": read("node_modules/exceljs/dist/exceljs.min.js"),
+  "/*JSZIP*/": read("node_modules/jszip/dist/jszip.min.js"),
+  "/*NS*/": read("src/xml-namespaces.js"),
   "/*CORE*/": read("src/billing-core.js"),
   "/*IO*/": read("src/workbook-io.js"),
   "/*APP*/": read("src/app.js"),

@@ -13,9 +13,10 @@
  *   to fit, filter on the header row.
  */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory(require("./billing-core.js"));
-  else root.WorkbookIO = factory(root.BillingCore);
-})(typeof self !== "undefined" ? self : this, function (Core) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory(require("./billing-core.js"), require("./xml-namespaces.js"), require("jszip"));
+  } else root.WorkbookIO = factory(root.BillingCore, root.XmlNamespaces, root.JSZip);
+})(typeof self !== "undefined" ? self : this, function (Core, Ns, JSZip) {
   "use strict";
 
   const DATE_FMT = "mm/dd/yyyy";
@@ -34,8 +35,16 @@
 
   /** Load an .xlsx (ArrayBuffer/Buffer) and turn its active sheet into a table. */
   async function readWorkbook(ExcelJS, data) {
+    // Some exporters write the XML with namespace prefixes (<x:workbook>),
+    // which ExcelJS can't read; rewrite those parts first. See xml-namespaces.js.
+    const fixed = await Ns.normalizeXlsx(JSZip, data);
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(data);
+    try {
+      await wb.xlsx.load(fixed.data);
+    } catch (e) {
+      throw new Error("This file couldn't be read as an Excel workbook (" + (e.message || e) + "). " +
+        "Try opening it in Excel, choosing File > Save As > Excel Workbook (.xlsx), and processing the saved copy.");
+    }
     const sheets = wb.worksheets;
     if (!sheets.length) throw new Error("The file has no worksheets.");
     let active = (wb.views && wb.views[0] && wb.views[0].activeTab) || 0;
