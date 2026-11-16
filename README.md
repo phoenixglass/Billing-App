@@ -259,6 +259,14 @@ If the filename does not contain a valid 8-digit date (MMDDYYYY), the system wil
 
 ## Usage
 
+### Offline browser version (no install, nothing uploaded)
+
+`browser/dist/Billing App.html` is the whole app in a single file: double-click
+it and it runs in Chrome or Edge, entirely on your computer, with the same
+options and the same output workbooks as the Streamlit app. See
+[browser/README.md](browser/README.md), including the test that checks it
+against the Python app.
+
 ### Streamlit Web App
 
 ```bash
@@ -332,6 +340,9 @@ pip install -r requirements.txt
   loaded against `Unbilled Step 1.py` (which just re-exports
   `billing_rules.assign_staff`)
 - `requirements.txt` - Python dependencies
+- `browser/` - The offline single-file browser version (`dist/Billing App.html`),
+  its sources, and the tests comparing it with the Python app. Its rules in
+  `browser/src/billing-core.js` mirror `billing_rules.py`; change both together.
 
 ## License
 

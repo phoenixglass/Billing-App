@@ -51,3 +51,7 @@ DPR Example.png
 *.env
 secrets.json
 .streamlit/secrets.toml
+
+# Browser version: dependencies (the built dist/ file is committed)
+browser/node_modules/
+!browser/dist/
