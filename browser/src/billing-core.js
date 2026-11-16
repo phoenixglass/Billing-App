@@ -222,7 +222,16 @@
       table.rows.forEach((r) => r.unshift(cell(null)));
     }
     const billableCol = table.headers.findIndex((h) => plain(h.v) === "Billable Status") + 1;
-    if (!billableCol) throw new Error("Billable Status column not found");
+    if (!billableCol) {
+      // Say what was actually there, so a renamed header, a title row above
+      // the headers or the wrong tab is obvious from the message.
+      const found = table.headers.slice(1).map((h) => plain(h.v)).filter((v) => v !== null && v !== "")
+        .map((v) => `"${pyStr(v)}"`);
+      const where = table.sheetName ? ` on the "${table.sheetName}" tab` : "";
+      throw new Error(`Billable Status column not found${where}. ` +
+        (found.length ? `Row 1 there has: ${found.slice(0, 25).join(", ")}${found.length > 25 ? ", ..." : ""}.`
+          : "Row 1 there is empty."));
+    }
     const invalid = [], keep = [];
     for (const r of table.rows) (plain(val(r, billableCol)) === "Invalid for Billing" ? invalid : keep).push(r);
     table.rows = keep;

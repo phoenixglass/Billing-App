@@ -126,8 +126,117 @@
 
   const isXmlPart = (name) => /\.(xml|rels)$/i.test(name) && !/^\/?xl\/(theme|media)\//i.test(name);
 
+  // The only worksheet part names ExcelJS reads. It finds worksheets by file
+  // name, not through the workbook's relationships the way Excel and
+  // openpyxl do, so a sheet stored as e.g. xl/worksheets/sheet.xml (no
+  // number) or xl/worksheets/Data.xml is silently skipped. With a second tab
+  // in the file, that tab is then read instead and the app reports
+  // "Billable Status column not found".
+  const SHEET_PART_RE = /^xl\/worksheets\/sheet(\d+)\.xml$/;
+
+  const attr = (tag, name) => {
+    const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`));
+    return m ? (m[1] !== undefined ? m[1] : m[2]) : null;
+  };
+  const setAttr = (tag, name, value) =>
+    tag.replace(new RegExp(`(\\s${name}\\s*=\\s*)(?:"[^"]*"|'[^']*')`), `$1"${value}"`);
+
+  /** Resolve a relationship target against a folder (no trailing slash) to a zip path. */
+  function resolvePath(dir, target) {
+    const parts = (target.startsWith("/") ? target.slice(1) : `${dir}/${target}`).split("/");
+    const out = [];
+    for (const p of parts) {
+      if (p === "..") out.pop();
+      else if (p && p !== ".") out.push(p);
+    }
+    return out.join("/");
+  }
+
+  /** Zip entry for a part name; OPC part names are case-insensitive. */
+  function findEntry(zip, path) {
+    const exact = zip.file(path);
+    if (exact) return exact;
+    const lower = path.toLowerCase();
+    return Object.values(zip.files).find((f) => !f.dir && f.name.toLowerCase() === lower) || null;
+  }
+
   /**
-   * Normalize every XML part of an .xlsx. `data` is an ArrayBuffer/Buffer/
+   * Move every worksheet part ExcelJS wouldn't find to xl/worksheets/sheetN.xml,
+   * updating the workbook's relationships, [Content_Types].xml and the sheet's
+   * own relationships. Expects namespace prefixes already normalized.
+   * Returns the list of parts moved, as "old -> new".
+   */
+  async function renameSheetParts(zip) {
+    const relsName = "xl/_rels/workbook.xml.rels";
+    const relsEntry = findEntry(zip, relsName);
+    if (!relsEntry) return [];
+    const rels = await relsEntry.async("string");
+
+    const used = new Set();
+    for (const name of Object.keys(zip.files)) {
+      const m = name.match(SHEET_PART_RE);
+      if (m) used.add(+m[1]);
+    }
+    let next = 1;
+    const freshName = () => {
+      while (used.has(next)) next++;
+      used.add(next);
+      return `xl/worksheets/sheet${next}.xml`;
+    };
+
+    const moves = [];
+    const newRels = rels.replace(/<Relationship\b[^>]*>/g, (tag) => {
+      const type = attr(tag, "Type") || "";
+      const target = attr(tag, "Target");
+      if (!/\/worksheet$/.test(type) || !target || attr(tag, "TargetMode") === "External") return tag;
+      const oldPath = resolvePath("xl", target);
+      const entry = findEntry(zip, oldPath);
+      if (!entry || SHEET_PART_RE.test(entry.name)) return tag;
+      const newPath = freshName();
+      moves.push({ from: entry.name, to: newPath });
+      return setAttr(tag, "Target", newPath.slice("xl/".length));
+    });
+    if (!moves.length) return [];
+
+    zip.file(relsEntry.name, newRels);
+    for (const { from, to } of moves) {
+      zip.file(to, await zip.file(from).async("uint8array"));
+      zip.remove(from);
+
+      // The sheet's own relationships (drawings, hyperlinks, ...): move them
+      // too, re-pointing relative targets from the old folder to the new one.
+      const fromDir = from.slice(0, from.lastIndexOf("/"));
+      const fromBase = from.slice(from.lastIndexOf("/") + 1);
+      const sheetRels = findEntry(zip, `${fromDir}/_rels/${fromBase}.rels`);
+      if (sheetRels) {
+        let text = await sheetRels.async("string");
+        text = text.replace(/<Relationship\b[^>]*>/g, (tag) => {
+          const t = attr(tag, "Target");
+          if (!t || t.startsWith("/") || attr(tag, "TargetMode") === "External") return tag;
+          const abs = resolvePath(fromDir, t);
+          return setAttr(tag, "Target", abs.startsWith("xl/") ? "../" + abs.slice(3) : "/" + abs);
+        });
+        zip.remove(sheetRels.name);
+        zip.file(`xl/worksheets/_rels/${to.slice("xl/worksheets/".length)}.rels`, text);
+      }
+    }
+
+    const ctEntry = findEntry(zip, "[Content_Types].xml");
+    if (ctEntry) {
+      let ct = await ctEntry.async("string");
+      for (const { from, to } of moves) {
+        ct = ct.replace(/<Override\b[^>]*>/g, (tag) =>
+          (attr(tag, "PartName") || "").toLowerCase() === "/" + from.toLowerCase()
+            ? setAttr(tag, "PartName", "/" + to) : tag);
+      }
+      zip.file(ctEntry.name, ct);
+    }
+    return moves.map(({ from, to }) => `${from} -> ${to}`);
+  }
+
+  /**
+   * Normalize every XML part of an .xlsx, then move worksheet parts ExcelJS
+   * can't find to names it can. `data` is an ArrayBuffer/Buffer/
    * Uint8Array. Returns { data, changed }: `data` is the original object when
    * nothing needed rewriting, and `changed` lists the parts that were.
    */
@@ -152,10 +261,11 @@
         changed.push(entry.name);
       }
     }
+    changed.push(...(await renameSheetParts(zip)));
     if (!changed.length) return { data, changed };
     const rebuilt = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
     return { data: rebuilt, changed };
   }
 
-  return { normalizeXml, normalizeXlsx, CANONICAL };
+  return { normalizeXml, normalizeXlsx, renameSheetParts, CANONICAL };
 });

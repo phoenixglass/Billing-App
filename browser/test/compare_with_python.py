@@ -156,6 +156,29 @@ def prefixed_copy(src, dst):
                 zout.writestr(info.filename, data)
 
 
+def renamed_sheet_copy(src, dst):
+    """Add a second tab after the data, then store the data sheet as
+    xl/worksheets/sheet.xml (no number), as some exporters name it. Excel and
+    openpyxl follow the workbook's relationships and read it unchanged;
+    ExcelJS only finds sheetN.xml, so without xml-namespaces.js's
+    renameSheetParts it silently skipped the data and read the other tab."""
+    import zipfile
+    wb = openpyxl.load_workbook(src)
+    wb.create_sheet("Report Parameters")["A1"] = "Run by: demo"
+    tmp = dst.with_suffix(".tmp.xlsx")
+    wb.save(tmp)
+    old, new = "worksheets/sheet1.xml", "worksheets/sheet.xml"
+    with zipfile.ZipFile(tmp) as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename in ("xl/_rels/workbook.xml.rels", "[Content_Types].xml"):
+                assert old.encode() in data, info.filename
+                data = data.replace(old.encode(), new.encode())
+            name = "xl/" + new if info.filename == "xl/" + old else info.filename
+            zout.writestr(name, data)
+    tmp.unlink()
+
+
 def load_python_app():
     home = Path(tempfile.mkdtemp())
     (home / ".streamlit").mkdir()
@@ -250,7 +273,8 @@ def main():
     ap.add_argument("--demo", help="folder with the DEMO Unbilled Revenue *.xlsx files")
     ap.add_argument("--seeds", type=int, default=8)
     ap.add_argument("--prefixed-seeds", type=int, default=2,
-                    help="also run this many inputs re-saved with namespace-prefixed XML")
+                    help="also run this many inputs re-saved with namespace-prefixed XML, "
+                         "with the data sheet renamed and a second tab, and with both")
     args = ap.parse_args()
 
     work = Path(tempfile.mkdtemp())
@@ -270,6 +294,15 @@ def main():
             q.parent.mkdir()
             prefixed_copy(p, q)
             inputs.append((q, name))
+            r = work / f"in_{seed}_renamed" / name
+            r.parent.mkdir()
+            renamed_sheet_copy(p, r)
+            inputs.append((r, name))
+            # Both quirks at once, as a .NET Open XML SDK export can have.
+            s = work / f"in_{seed}_renamed_prefixed" / name
+            s.parent.mkdir()
+            prefixed_copy(r, s)
+            inputs.append((s, name))
 
     app = load_python_app()
     cases = failures = rows_checked = 0
@@ -298,7 +331,7 @@ def main():
                         rows_checked += openpyxl.load_workbook(io.BytesIO(buf.getvalue())).worksheets[0].max_row - 1
             status = "ok" if not problems else "MISMATCH"
             failures += bool(problems)
-            tag = " prefixed" if path.parent.name.endswith("_prefixed") else ""
+            tag = "".join(f" {t}" for t in ("renamed", "prefixed") if f"_{t}" in path.parent.name)
             print(f"{status:8} {name[-13:-5]}{tag} {json.dumps(js_opts)[:80]}")
             for p in problems[:4]:
                 print("         ", p)

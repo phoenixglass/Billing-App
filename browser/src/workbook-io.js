@@ -71,7 +71,7 @@
     }
     const widths = [];
     for (let c = 1; c <= colCount; c++) widths.push(ws.getColumn(c).width);
-    return { workbook: wb, sheet: ws, activeIndex: active, table: { headers, rows }, widths };
+    return { workbook: wb, sheet: ws, activeIndex: active, table: { headers, rows, sheetName: ws.name }, widths };
   }
 
   function writeValue(target, cell, keepStyle) {

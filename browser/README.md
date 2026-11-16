@@ -27,7 +27,7 @@ workbooks as the Streamlit app, but:
 |---|---|
 | `src/billing-core.js` | The billing rules: a port of `billing_rules.py` plus the report-building part of `app.py`'s `process_workbook`. |
 | `src/workbook-io.js` | Reads the export and writes the output workbooks, using [ExcelJS](https://github.com/exceljs/exceljs) 4.4.0. |
-| `src/xml-namespaces.js` | Runs before ExcelJS reads the export. Some exporters write the workbook's XML with namespace prefixes (`<x:workbook>`); Excel and openpyxl accept that, but ExcelJS fails with errors like *Cannot read properties of undefined (reading 'sheets')*. This rewrites those parts (using [JSZip](https://stuk.github.io/jszip/) 3.10.1) to the spelling ExcelJS expects. |
+| `src/xml-namespaces.js` | Runs before ExcelJS reads the export. Some exporters write the workbook's XML with namespace prefixes (`<x:workbook>`); Excel and openpyxl accept that, but ExcelJS fails with errors like *Cannot read properties of undefined (reading 'sheets')*. This rewrites those parts (using [JSZip](https://stuk.github.io/jszip/) 3.10.1) to the spelling ExcelJS expects. It also renames worksheet parts ExcelJS can't find: ExcelJS only reads sheets stored as `xl/worksheets/sheetN.xml`, so a sheet saved as, say, `sheet.xml` was silently skipped, and in a two-tab export the other tab was read instead (*Billable Status column not found*). |
 | `src/app.js`, `src/index.template.html` | The page. |
 | `build.js` | Inlines ExcelJS, JSZip and the sources into `dist/Billing App.html`. |
 
@@ -50,8 +50,9 @@ cell value, the Status dropdown, column widths, and the summary numbers. It
 covers the demo files (if given) and random reports built from the real
 export's columns and category values, on every weekday, with 14 combinations of
 the per-run options. The first `--prefixed-seeds` inputs (default 2) are also
-re-saved with namespace-prefixed XML and run again, to check the browser
-version reads those files exactly as the Python app does. No patient data is
+re-saved with namespace-prefixed XML, with the data sheet stored as
+`xl/worksheets/sheet.xml` next to a second tab, and with both, and run again,
+to check the browser version reads those files exactly as the Python app does. No patient data is
 involved.
 
 `test/namespaces_test.js` checks the XML rewriting on small hand-written
